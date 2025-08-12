@@ -15,19 +15,21 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================
-# Utilidades texto / PDF (sin multi_cell)
+# Helpers de texto (UTF-8, sin latin-1)
 # =========================
 def normalize_text(text: str) -> str:
     if not isinstance(text, str):
         text = str(text)
+    # normaliza saltos y comillas/guiones “curvos”
     text = text.replace("\r", " ").replace("\n", " ")
     text = (text
             .replace("–", "-").replace("—", "-").replace("•", "-")
             .replace("“", '"').replace("”", '"').replace("’", "'"))
-    return unicodedata.normalize("NFKD", text)
+    # mantener acentos en UTF-8
+    return unicodedata.normalize("NFKC", text)
 
-def split_tokens(text: str, max_len: int = 40) -> str:
-    """Trocea tokens sin espacios (URLs/tokens) para que siempre quepan."""
+def split_tokens_long(text: str, max_len: int = 40) -> str:
+    """Trocea tokens largos (URLs/tokens sin espacios) para que quepan."""
     parts = []
     for tok in text.split(" "):
         if len(tok) > max_len:
@@ -36,12 +38,9 @@ def split_tokens(text: str, max_len: int = 40) -> str:
             parts.append(tok)
     return " ".join(parts)
 
-def to_latin1_safe(text: str) -> str:
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-def make_lines(text: str, max_len: int = 40) -> list[str]:
-    """Convierte un string a líneas <= max_len (por carácter) listas para pintar."""
-    text = to_latin1_safe(split_tokens(normalize_text(text), max_len))
+def make_lines_utf8(text: str, max_len: int = 40) -> list[str]:
+    """Parte el texto en líneas <= max_len (por carácter, aproximado)."""
+    text = split_tokens_long(normalize_text(text), max_len)
     words = text.split(" ")
     lines, cur, n = [], [], 0
     for w in words:
@@ -49,28 +48,35 @@ def make_lines(text: str, max_len: int = 40) -> list[str]:
         if n + need > max_len:
             if cur:
                 lines.append(" ".join(cur))
-            cur = [w]
-            n = len(w)
+            cur, n = [w], len(w)
         else:
-            cur.append(w)
-            n += need
+            cur.append(w); n += need
     if cur:
         lines.append(" ".join(cur))
     return lines
 
-def mc_cell(pdf: FPDF, text: str, lh: int = 8):
-    """Pinta texto usando cell() línea por línea (nunca usamos multi_cell)."""
-    for line in make_lines(text, max_len=40):
+def write_lines(pdf: FPDF, text: str, lh: int = 8):
+    """Escribe usando cell() línea por línea (sin multi_cell)."""
+    for line in make_lines_utf8(text, max_len=40):
         pdf.cell(0, lh, line, ln=1)
 
 # =========================
 # Estructura del caso + scoring
 # =========================
 SECTIONS = [
-    "Nombre del proyecto","Objetivos de negocio","Problema a resolver","Solución esperada",
-    "Usuario objetivo (target)","Funcionalidades deseadas","Expectativas","Experiencia previa",
-    "Forma de adjudicación","Criterios de evaluación","Fecha de lanzamiento estimada",
-    "Presupuesto","Notas generales",
+    "Nombre del proyecto",
+    "Objetivos de negocio",
+    "Problema a resolver",
+    "Solución esperada",
+    "Usuario objetivo (target)",
+    "Funcionalidades deseadas",
+    "Expectativas",
+    "Experiencia previa",
+    "Forma de adjudicación",
+    "Criterios de evaluación",
+    "Fecha de lanzamiento estimada",
+    "Presupuesto",
+    "Notas generales",
 ]
 
 PREGUNTAS = [
@@ -80,7 +86,7 @@ PREGUNTAS = [
     "¿El proyecto resuelve un problema de prioridad 1, 2 o 3 dentro de tu empresa?",
     "¿Quién toma la decisión? ¿Hablamos con tomador de decisión?",
 ]
-PESOS = [20, 30, 30, 5, 5]
+PESOS = [20, 30, 30, 5, 5]   # suma 100
 
 SYSTEM_PROMPT = (
     "Eres un asistente comercial que levanta un caso de negocio mediante conversación. "
@@ -92,7 +98,7 @@ SYSTEM_PROMPT = (
 # =========================
 st.image("logo_babel.jpeg", width=200)
 st.title("Agente de Requerimientos - Babel")
-st.caption("Chat con IA + PDF + Calificación automática (5 preguntas: 20/30/30/5/5)")
+st.caption("Chat con IA + PDF (con acentos) + Calificación automática (5 preguntas: 20/30/30/5/5)")
 
 # =========================
 # Estado del chat
@@ -212,13 +218,17 @@ except Exception:
     st.info("Responde algunas preguntas para poder calcular la calificación.")
 
 # =========================
-# PDF (solo cell, NUNCA multi_cell)
+# PDF (con fuente Unicode, sin multi_cell)
 # =========================
 def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+
+    # 👉 Fuente Unicode (sube DejaVuSans.ttf al repo)
+    # Usamos la misma TTF para todo (sin estilo B para evitar depender de DejaVuSans-Bold.ttf)
+    pdf.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
+    pdf.set_font("DejaVu", "", 12)
 
     # Cabecera
     try:
@@ -226,39 +236,39 @@ def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     except Exception:
         pass
     pdf.ln(30)
-    mc_cell(pdf, "Caso de Negocio - Generado por Agente Babel")
+    write_lines(pdf, "Caso de Negocio - Generado por Agente Babel")
 
     # Secciones
-    pdf.set_font("Arial", "B", 12)
+    pdf.set_font("DejaVu", "", 13)
     for section in SECTIONS:
-        mc_cell(pdf, section)
-        pdf.set_font("Arial", "", 12)
+        write_lines(pdf, section)
+        pdf.set_font("DejaVu", "", 12)
         content = data_dict.get(section, "") or "-"
-        mc_cell(pdf, content)
+        write_lines(pdf, content)
         pdf.ln(2)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("DejaVu", "", 13)
 
     # Calificación
     pdf.ln(4)
-    pdf.set_font("Arial", "B", 12)
-    mc_cell(pdf, "Calificacion de la Oportunidad (5 preguntas)")
-    pdf.set_font("Arial", "", 12)
-    mc_cell(pdf, f"Puntaje: {puntos} / 100")
-    mc_cell(pdf, f"Porcentaje: {porcentaje:.2f}%")
-    mc_cell(pdf, f"Clasificacion: {clasificacion}")
+    pdf.set_font("DejaVu", "", 13)
+    write_lines(pdf, "Calificación de la Oportunidad (5 preguntas)")
+    pdf.set_font("DejaVu", "", 12)
+    write_lines(pdf, f"Puntaje: {puntos} / 100")
+    write_lines(pdf, f"Porcentaje: {porcentaje:.2f}%")
+    write_lines(pdf, f"Clasificación: {clasificacion}")
     for q, got, w, pts in detalle:
-        mc_cell(pdf, f"- {q} -> {got} (peso {w}%, pts {pts})")
+        write_lines(pdf, f"- {q} -> {got} (peso {w}%, pts {pts})")
 
     # Conversación (anexo)
     pdf.ln(4)
-    pdf.set_font("Arial", "B", 12)
-    mc_cell(pdf, "Anexo: Conversacion")
-    pdf.set_font("Arial", "", 12)
+    pdf.set_font("DejaVu", "", 13)
+    write_lines(pdf, "Anexo: Conversación")
+    pdf.set_font("DejaVu", "", 12)
     for msg in messages:
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
             content = msg.get("content", "")
-            mc_cell(pdf, f"{role}: {content}")
+            write_lines(pdf, f"{role}: {content}")
 
     return pdf
 
