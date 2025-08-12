@@ -6,7 +6,7 @@ from fpdf import FPDF
 from openai import OpenAI
 
 # =========================
-# Config API Key (Cloud + local)
+# API KEY (Streamlit Cloud -> Secrets) o variable de entorno
 # =========================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not api_key:
@@ -15,22 +15,35 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================
-# Utilidades
+# Utilidades para PDF (evitar errores de FPDF)
 # =========================
-def sanitize_for_pdf(text: str) -> str:
-    """
-    Convierte a latin-1 y reemplaza todo lo que no sea compatible.
-    Evita que FPDF truene por emojis/comillas curvas/etc.
-    """
+def soft_wrap(text: str, max_len: int = 60) -> str:
+    """Corta cualquier 'palabra' sin espacios que exceda max_len (URLs/tokens)."""
     if not isinstance(text, str):
         text = str(text)
-    # Normaliza algunos caracteres comunes
+    out = []
+    for tok in text.split(" "):
+        if len(tok) > max_len:
+            chunks = [tok[i:i + max_len] for i in range(0, len(tok), max_len)]
+            out.append("\n".join(chunks))
+        else:
+            out.append(tok)
+    return " ".join(out)
+
+def clean_for_pdf(text: str) -> str:
+    """Normaliza, envuelve y convierte a latin-1 con reemplazo."""
+    if not isinstance(text, str):
+        text = str(text)
     text = (text
             .replace("–", "-").replace("—", "-").replace("•", "-")
             .replace("“", '"').replace("”", '"').replace("’", "'"))
     text = unicodedata.normalize("NFKD", text)
+    text = soft_wrap(text, max_len=60)
     return text.encode("latin-1", "replace").decode("latin-1")
 
+# =========================
+# Estructura del caso + scoring
+# =========================
 SECTIONS = [
     "Nombre del proyecto",
     "Objetivos de negocio",
@@ -47,7 +60,6 @@ SECTIONS = [
     "Notas generales",
 ]
 
-# 5 preguntas y pesos (20/30/30/5/5)
 PREGUNTAS = [
     "¿Tiene fecha planeada para iniciar proyecto?",
     "¿Cuenta con presupuesto?",
@@ -55,7 +67,7 @@ PREGUNTAS = [
     "¿El proyecto resuelve un problema de prioridad 1, 2 o 3 dentro de tu empresa?",
     "¿Quién toma la decisión? ¿Hablamos con tomador de decisión?",
 ]
-PESOS = [20, 30, 30, 5, 5]  # suman 100
+PESOS = [20, 30, 30, 5, 5]   # suma 100
 
 SYSTEM_PROMPT = (
     "Eres un asistente comercial que levanta un caso de negocio mediante conversación. "
@@ -159,7 +171,7 @@ def infer_answers_fixed(messages):
         timeout=60
     )
     respuestas = json.loads(comp.choices[0].message.content)
-    # Normalización simple
+    # Normalización
     norm = {}
     for q in PREGUNTAS:
         v = (respuestas.get(q, "No") or "No").strip().lower()
@@ -175,9 +187,8 @@ def score_fixed(respuestas):
         pts = w if got == "Sí" else 0
         puntos += pts
         detalle.append((q, got, w, pts))
-    porcentaje = puntos  # ya está en porcentaje por diseño
-    # Sin emojis para PDF
-    clasificacion = "VALIDA" if porcentaje >= 70 else "NO CALIFICADA"
+    porcentaje = puntos  # ya es %
+    clasificacion = "VALIDA" if porcentaje >= 70 else "NO CALIFICADA"  # sin emojis para PDF
     return puntos, porcentaje, clasificacion, detalle
 
 # Ejecutar calificación en pantalla
@@ -199,7 +210,9 @@ except Exception:
 # =========================
 def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)  # clave para evitar desbordes
     pdf.add_page()
+
     # Cabecera
     try:
         pdf.image("logo_babel.jpeg", x=10, y=8, w=40)
@@ -207,39 +220,40 @@ def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
         pass
     pdf.set_font("Arial", size=12)
     pdf.ln(30)
-    pdf.multi_cell(0, 10, sanitize_for_pdf("Caso de Negocio - Generado por Agente Babel\n"), align="L")
+    pdf.multi_cell(0, 10, clean_for_pdf("Caso de Negocio - Generado por Agente Babel\n"), align="L")
 
     # Secciones
     pdf.set_font("Arial", "B", 12)
     for section in SECTIONS:
-        pdf.multi_cell(0, 8, sanitize_for_pdf(section))
+        pdf.multi_cell(0, 8, clean_for_pdf(section))
         pdf.set_font("Arial", "", 12)
-        content = sanitize_for_pdf(data_dict.get(section, "")) or "-"
-        pdf.multi_cell(0, 8, content)
+        content = data_dict.get(section, "") or "-"
+        pdf.multi_cell(0, 8, clean_for_pdf(content))
         pdf.ln(2)
         pdf.set_font("Arial", "B", 12)
 
     # Calificación
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    pdf.multi_cell(0, 8, sanitize_for_pdf("Calificacion de la Oportunidad (5 preguntas)"))
+    pdf.multi_cell(0, 8, clean_for_pdf("Calificacion de la Oportunidad (5 preguntas)"))
     pdf.set_font("Arial", "", 12)
     resumen = f"Puntaje: {puntos} / 100\nPorcentaje: {porcentaje:.2f}%\nClasificacion: {clasificacion}\n"
-    pdf.multi_cell(0, 8, sanitize_for_pdf(resumen))
+    pdf.multi_cell(0, 8, clean_for_pdf(resumen))
     for q, got, w, pts in detalle:
         line = f"- {q} -> {got} (peso {w}%, pts {pts})"
-        pdf.multi_cell(0, 8, sanitize_for_pdf(line))
+        pdf.multi_cell(0, 8, clean_for_pdf(line))
 
     # Conversación (anexo)
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    pdf.multi_cell(0, 8, sanitize_for_pdf("Anexo: Conversacion"))
+    pdf.multi_cell(0, 8, clean_for_pdf("Anexo: Conversacion"))
     pdf.set_font("Arial", "", 12)
     for msg in messages:
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
-            content = sanitize_for_pdf(msg["content"])
-            pdf.multi_cell(0, 8, sanitize_for_pdf(f"{role}: {content}"))
+            content = msg["content"]
+            pdf.multi_cell(0, 8, clean_for_pdf(f"{role}: {content}"))
+
     return pdf
 
 # Botón para generar PDF
