@@ -6,7 +6,7 @@ from fpdf import FPDF
 from openai import OpenAI
 
 # =========================
-# API KEY (Streamlit Secrets o variable de entorno)
+# API KEY
 # =========================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not api_key:
@@ -15,39 +15,62 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================
-# Utilidades para PDF (sanitizar + cortar palabras largas)
+# Utilidades texto / PDF
 # =========================
-def soft_wrap(text: str, max_len: int = 40) -> str:
-    """
-    Corta cualquier 'palabra' sin espacios que exceda max_len (ej. URLs/tokens).
-    Reemplaza saltos de línea por espacios para que nunca quede un bloque
-    imposible de partir para FPDF.
-    """
-    if not isinstance(text, str):
-        text = str(text)
-    text = text.replace("\r", " ").replace("\n", " ")  # ← clave
-    out = []
-    for tok in text.split(" "):
-        if len(tok) > max_len:
-            chunks = [tok[i:i + max_len] for i in range(0, len(tok), max_len)]
-            out.append("\n".join(chunks))
-        else:
-            out.append(tok)
-    return " ".join(out)
+def soft_wrap_token(tok: str, max_len: int) -> list[str]:
+    """Corta un token sin espacios en chunks seguros."""
+    return [tok[i:i+max_len] for i in range(0, len(tok), max_len)]
 
-def clean_for_pdf(text: str) -> str:
-    """
-    Normaliza (quita comillas curvas, guiones largos), aplica soft-wrap y
-    convierte a latin-1 con reemplazo para evitar errores de FPDF.
-    """
+def normalize_text(text: str) -> str:
+    """Normaliza comillas/guiones, elimina CR/LF dobles, y pasa NFKD."""
     if not isinstance(text, str):
         text = str(text)
     text = (text
+            .replace("\r", " ").replace("\n", " ")
             .replace("–", "-").replace("—", "-").replace("•", "-")
             .replace("“", '"').replace("”", '"').replace("’", "'"))
-    text = unicodedata.normalize("NFKD", text)
-    text = soft_wrap(text, max_len=40)
+    return unicodedata.normalize("NFKD", text)
+
+def to_latin1_safe(text: str) -> str:
+    """Convierte a latin-1 con reemplazo (evita errores de FPDF)."""
     return text.encode("latin-1", "replace").decode("latin-1")
+
+def split_to_lines(text: str, max_len: int = 40) -> list[str]:
+    """
+    Divide el texto en líneas seguras:
+      - Separa por espacios cuando se puede.
+      - Si un 'token' excede max_len, lo corta en chunks.
+    Devuelve una lista de líneas listas para pintar.
+    """
+    text = normalize_text(text)
+    parts = []
+    for tok in text.split(" "):
+        if len(tok) > max_len:
+            parts.extend(soft_wrap_token(tok, max_len))
+        else:
+            parts.append(tok)
+    safe = " ".join(parts).strip()
+    # ahora partimos en líneas de longitud <= max_len a la fuerza
+    lines, acc = [], []
+    length = 0
+    for word in safe.split(" "):
+        wlen = len(word) + (1 if length > 0 else 0)
+        if length + wlen > max_len:
+            lines.append(" ".join(acc))
+            acc = [word]
+            length = len(word)
+        else:
+            acc.append(word)
+            length += wlen
+    if acc:
+        lines.append(" ".join(acc))
+    # latin-1 safe
+    return [to_latin1_safe(l) for l in lines if l]
+
+def mc(pdf: FPDF, text: str, lh: int = 8):
+    """Imprime texto usando nuestras líneas seguras (evita errores de FPDF)."""
+    for line in split_to_lines(text, max_len=40):
+        pdf.multi_cell(0, lh, line)
 
 # =========================
 # Estructura del caso + scoring
@@ -98,12 +121,10 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": "Hola, estoy aquí para ayudarte a construir tu caso de negocio. ¿Cómo se llama tu proyecto y de qué trata?"}
     ]
 
-# Render del historial (omitimos el system)
 for msg in st.session_state.messages[1:]:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# Entrada del usuario
 if prompt := st.chat_input("Escribe tu respuesta aquí..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -129,7 +150,6 @@ st.subheader("🧮 Calificación automática (≥ 70% = válida)")
 # Funciones IA (resumen y calificación)
 # =========================
 def extract_structured_summary(messages):
-    """Devuelve dict con todas las SECTIONS completadas (o vacío) usando JSON forzado."""
     try:
         sys = {"role": "system", "content": "Devuelve SOLO JSON con las claves exactas del caso de negocio."}
         user = {
@@ -158,7 +178,6 @@ def extract_structured_summary(messages):
         return {k: "" for k in SECTIONS}
 
 def infer_answers_fixed(messages):
-    """Pide a GPT Sí/No para las 5 preguntas (JSON forzado)."""
     prompt = (
         "Con base en la conversación siguiente, responde con 'Sí' o 'No' "
         "a cada una de estas preguntas EXACTAS. Devuelve SOLO JSON válido, "
@@ -179,7 +198,6 @@ def infer_answers_fixed(messages):
         timeout=60
     )
     respuestas = json.loads(comp.choices[0].message.content)
-    # Normalización
     norm = {}
     for q in PREGUNTAS:
         v = (respuestas.get(q, "No") or "No").strip().lower()
@@ -187,7 +205,6 @@ def infer_answers_fixed(messages):
     return norm
 
 def score_fixed(respuestas):
-    """Calcula puntaje/porcentaje/clasificación con pesos 20/30/30/5/5."""
     puntos = 0
     detalle = []
     for q, w in zip(PREGUNTAS, PESOS):
@@ -195,11 +212,10 @@ def score_fixed(respuestas):
         pts = w if got == "Sí" else 0
         puntos += pts
         detalle.append((q, got, w, pts))
-    porcentaje = puntos  # ya es %
-    clasificacion = "VALIDA" if porcentaje >= 70 else "NO CALIFICADA"  # sin emojis para PDF
+    porcentaje = puntos
+    clasificacion = "VALIDA" if porcentaje >= 70 else "NO CALIFICADA"
     return puntos, porcentaje, clasificacion, detalle
 
-# Ejecutar calificación en pantalla
 try:
     respuestas = infer_answers_fixed(st.session_state.messages)
     puntos, porcentaje, clasificacion, detalle = score_fixed(respuestas)
@@ -218,50 +234,50 @@ except Exception:
 # =========================
 def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)  # evita desbordes
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    pdf.set_font("Arial", size=12)
 
     # Cabecera
     try:
         pdf.image("logo_babel.jpeg", x=10, y=8, w=40)
     except Exception:
         pass
-    pdf.set_font("Arial", size=12)
     pdf.ln(30)
-    pdf.multi_cell(0, 10, clean_for_pdf("Caso de Negocio - Generado por Agente Babel\n"), align="L")
+    mc(pdf, "Caso de Negocio - Generado por Agente Babel")
 
     # Secciones
     pdf.set_font("Arial", "B", 12)
     for section in SECTIONS:
-        pdf.multi_cell(0, 8, clean_for_pdf(section))
+        mc(pdf, section)
         pdf.set_font("Arial", "", 12)
         content = data_dict.get(section, "") or "-"
-        pdf.multi_cell(0, 8, clean_for_pdf(content))
+        mc(pdf, content)
         pdf.ln(2)
         pdf.set_font("Arial", "B", 12)
 
     # Calificación
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    pdf.multi_cell(0, 8, clean_for_pdf("Calificacion de la Oportunidad (5 preguntas)"))
+    mc(pdf, "Calificacion de la Oportunidad (5 preguntas)")
     pdf.set_font("Arial", "", 12)
     resumen = f"Puntaje: {puntos} / 100\nPorcentaje: {porcentaje:.2f}%\nClasificacion: {clasificacion}\n"
-    pdf.multi_cell(0, 8, clean_for_pdf(resumen))
+    for line in resumen.split("\n"):
+        if line.strip():
+            mc(pdf, line)
     for q, got, w, pts in detalle:
-        line = f"- {q} -> {got} (peso {w}%, pts {pts})"
-        pdf.multi_cell(0, 8, clean_for_pdf(line))
+        mc(pdf, f"- {q} -> {got} (peso {w}%, pts {pts})")
 
     # Conversación (anexo)
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    pdf.multi_cell(0, 8, clean_for_pdf("Anexo: Conversacion"))
+    mc(pdf, "Anexo: Conversacion")
     pdf.set_font("Arial", "", 12)
     for msg in messages:
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
             content = msg.get("content", "")
-            safe_content = clean_for_pdf(content)   # 👈 siempre limpiamos
-            pdf.multi_cell(0, 8, f"{role}: {safe_content}", align="L")
+            mc(pdf, f"{role}: {content}")
 
     return pdf
 
