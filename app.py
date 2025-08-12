@@ -139,7 +139,7 @@ def score_fixed(respuestas):
         puntos += pts
         detalle.append((q, got, w, pts))
     porcentaje = puntos
-    clasificacion = "VÁLIDA ✅" if porcentaje >= 70 else "NO CALIFICADA ⚠️"
+    clasificacion = "VÁLIDA" if porcentaje >= 70 else "NO CALIFICADA"
     return puntos, porcentaje, clasificacion, detalle
 
 try:
