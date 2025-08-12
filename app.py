@@ -6,7 +6,7 @@ from fpdf import FPDF
 from openai import OpenAI
 
 # =========================
-# API KEY (Streamlit Cloud -> Secrets) o variable de entorno
+# API KEY (Streamlit Secrets o variable de entorno)
 # =========================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not api_key:
@@ -15,10 +15,13 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================
-# Utilidades para PDF (evitar errores de FPDF)
+# Utilidades para PDF (sanitizar + cortar palabras largas)
 # =========================
-def soft_wrap(text: str, max_len: int = 60) -> str:
-    """Corta cualquier 'palabra' sin espacios que exceda max_len (URLs/tokens)."""
+def soft_wrap(text: str, max_len: int = 40) -> str:
+    """
+    Corta cualquier 'palabra' sin espacios que exceda max_len (ej. URLs/tokens).
+    Inserta saltos de línea para que FPDF pueda renderizar.
+    """
     if not isinstance(text, str):
         text = str(text)
     out = []
@@ -31,14 +34,17 @@ def soft_wrap(text: str, max_len: int = 60) -> str:
     return " ".join(out)
 
 def clean_for_pdf(text: str) -> str:
-    """Normaliza, envuelve y convierte a latin-1 con reemplazo."""
+    """
+    Normaliza (quita comillas curvas, guiones largos), aplica soft-wrap y
+    convierte a latin-1 con reemplazo para evitar errores de FPDF.
+    """
     if not isinstance(text, str):
         text = str(text)
     text = (text
             .replace("–", "-").replace("—", "-").replace("•", "-")
             .replace("“", '"').replace("”", '"').replace("’", "'"))
     text = unicodedata.normalize("NFKD", text)
-    text = soft_wrap(text, max_len=60)
+    text = soft_wrap(text, max_len=40)
     return text.encode("latin-1", "replace").decode("latin-1")
 
 # =========================
@@ -210,7 +216,7 @@ except Exception:
 # =========================
 def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)  # clave para evitar desbordes
+    pdf.set_auto_page_break(auto=True, margin=15)  # evita desbordes
     pdf.add_page()
 
     # Cabecera
@@ -252,7 +258,8 @@ def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
             content = msg["content"]
-            pdf.multi_cell(0, 8, clean_for_pdf(f"{role}: {content}"))
+            safe_content = clean_for_pdf(content)   # 👈 importante
+            pdf.multi_cell(0, 8, f"{role}: {safe_content}", align="L")
 
     return pdf
 
