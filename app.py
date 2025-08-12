@@ -6,7 +6,7 @@ from fpdf import FPDF
 from openai import OpenAI
 
 # =========================
-# API KEY
+# API KEY (Streamlit Secrets o variable de entorno)
 # =========================
 api_key = st.secrets.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
 if not api_key:
@@ -15,80 +15,62 @@ if not api_key:
 client = OpenAI(api_key=api_key)
 
 # =========================
-# Utilidades texto / PDF
+# Utilidades texto / PDF (sin multi_cell)
 # =========================
-def soft_wrap_token(tok: str, max_len: int) -> list[str]:
-    """Corta un token sin espacios en chunks seguros."""
-    return [tok[i:i+max_len] for i in range(0, len(tok), max_len)]
-
 def normalize_text(text: str) -> str:
-    """Normaliza comillas/guiones, elimina CR/LF dobles, y pasa NFKD."""
     if not isinstance(text, str):
         text = str(text)
+    text = text.replace("\r", " ").replace("\n", " ")
     text = (text
-            .replace("\r", " ").replace("\n", " ")
             .replace("–", "-").replace("—", "-").replace("•", "-")
             .replace("“", '"').replace("”", '"').replace("’", "'"))
     return unicodedata.normalize("NFKD", text)
 
-def to_latin1_safe(text: str) -> str:
-    """Convierte a latin-1 con reemplazo (evita errores de FPDF)."""
-    return text.encode("latin-1", "replace").decode("latin-1")
-
-def split_to_lines(text: str, max_len: int = 40) -> list[str]:
-    """
-    Divide el texto en líneas seguras:
-      - Separa por espacios cuando se puede.
-      - Si un 'token' excede max_len, lo corta en chunks.
-    Devuelve una lista de líneas listas para pintar.
-    """
-    text = normalize_text(text)
+def split_tokens(text: str, max_len: int = 40) -> str:
+    """Trocea tokens sin espacios (URLs/tokens) para que siempre quepan."""
     parts = []
     for tok in text.split(" "):
         if len(tok) > max_len:
-            parts.extend(soft_wrap_token(tok, max_len))
+            parts += [tok[i:i+max_len] for i in range(0, len(tok), max_len)]
         else:
             parts.append(tok)
-    safe = " ".join(parts).strip()
-    # ahora partimos en líneas de longitud <= max_len a la fuerza
-    lines, acc = [], []
-    length = 0
-    for word in safe.split(" "):
-        wlen = len(word) + (1 if length > 0 else 0)
-        if length + wlen > max_len:
-            lines.append(" ".join(acc))
-            acc = [word]
-            length = len(word)
-        else:
-            acc.append(word)
-            length += wlen
-    if acc:
-        lines.append(" ".join(acc))
-    # latin-1 safe
-    return [to_latin1_safe(l) for l in lines if l]
+    return " ".join(parts)
 
-def mc(pdf: FPDF, text: str, lh: int = 8):
-    """Imprime texto usando nuestras líneas seguras (evita errores de FPDF)."""
-    for line in split_to_lines(text, max_len=40):
-        pdf.multi_cell(0, lh, line)
+def to_latin1_safe(text: str) -> str:
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+def make_lines(text: str, max_len: int = 40) -> list[str]:
+    """Convierte un string a líneas <= max_len (por carácter) listas para pintar."""
+    text = to_latin1_safe(split_tokens(normalize_text(text), max_len))
+    words = text.split(" ")
+    lines, cur, n = [], [], 0
+    for w in words:
+        need = len(w) + (1 if n > 0 else 0)
+        if n + need > max_len:
+            if cur:
+                lines.append(" ".join(cur))
+            cur = [w]
+            n = len(w)
+        else:
+            cur.append(w)
+            n += need
+    if cur:
+        lines.append(" ".join(cur))
+    return lines
+
+def mc_cell(pdf: FPDF, text: str, lh: int = 8):
+    """Pinta texto usando cell() línea por línea (nunca usamos multi_cell)."""
+    for line in make_lines(text, max_len=40):
+        pdf.cell(0, lh, line, ln=1)
 
 # =========================
 # Estructura del caso + scoring
 # =========================
 SECTIONS = [
-    "Nombre del proyecto",
-    "Objetivos de negocio",
-    "Problema a resolver",
-    "Solución esperada",
-    "Usuario objetivo (target)",
-    "Funcionalidades deseadas",
-    "Expectativas",
-    "Experiencia previa",
-    "Forma de adjudicación",
-    "Criterios de evaluación",
-    "Fecha de lanzamiento estimada",
-    "Presupuesto",
-    "Notas generales",
+    "Nombre del proyecto","Objetivos de negocio","Problema a resolver","Solución esperada",
+    "Usuario objetivo (target)","Funcionalidades deseadas","Expectativas","Experiencia previa",
+    "Forma de adjudicación","Criterios de evaluación","Fecha de lanzamiento estimada",
+    "Presupuesto","Notas generales",
 ]
 
 PREGUNTAS = [
@@ -98,7 +80,7 @@ PREGUNTAS = [
     "¿El proyecto resuelve un problema de prioridad 1, 2 o 3 dentro de tu empresa?",
     "¿Quién toma la decisión? ¿Hablamos con tomador de decisión?",
 ]
-PESOS = [20, 30, 30, 5, 5]   # suma 100
+PESOS = [20, 30, 30, 5, 5]
 
 SYSTEM_PROMPT = (
     "Eres un asistente comercial que levanta un caso de negocio mediante conversación. "
@@ -230,7 +212,7 @@ except Exception:
     st.info("Responde algunas preguntas para poder calcular la calificación.")
 
 # =========================
-# PDF
+# PDF (solo cell, NUNCA multi_cell)
 # =========================
 def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     pdf = FPDF()
@@ -244,40 +226,39 @@ def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     except Exception:
         pass
     pdf.ln(30)
-    mc(pdf, "Caso de Negocio - Generado por Agente Babel")
+    mc_cell(pdf, "Caso de Negocio - Generado por Agente Babel")
 
     # Secciones
     pdf.set_font("Arial", "B", 12)
     for section in SECTIONS:
-        mc(pdf, section)
+        mc_cell(pdf, section)
         pdf.set_font("Arial", "", 12)
         content = data_dict.get(section, "") or "-"
-        mc(pdf, content)
+        mc_cell(pdf, content)
         pdf.ln(2)
         pdf.set_font("Arial", "B", 12)
 
     # Calificación
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    mc(pdf, "Calificacion de la Oportunidad (5 preguntas)")
+    mc_cell(pdf, "Calificacion de la Oportunidad (5 preguntas)")
     pdf.set_font("Arial", "", 12)
-    resumen = f"Puntaje: {puntos} / 100\nPorcentaje: {porcentaje:.2f}%\nClasificacion: {clasificacion}\n"
-    for line in resumen.split("\n"):
-        if line.strip():
-            mc(pdf, line)
+    mc_cell(pdf, f"Puntaje: {puntos} / 100")
+    mc_cell(pdf, f"Porcentaje: {porcentaje:.2f}%")
+    mc_cell(pdf, f"Clasificacion: {clasificacion}")
     for q, got, w, pts in detalle:
-        mc(pdf, f"- {q} -> {got} (peso {w}%, pts {pts})")
+        mc_cell(pdf, f"- {q} -> {got} (peso {w}%, pts {pts})")
 
     # Conversación (anexo)
     pdf.ln(4)
     pdf.set_font("Arial", "B", 12)
-    mc(pdf, "Anexo: Conversacion")
+    mc_cell(pdf, "Anexo: Conversacion")
     pdf.set_font("Arial", "", 12)
     for msg in messages:
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
             content = msg.get("content", "")
-            mc(pdf, f"{role}: {content}")
+            mc_cell(pdf, f"{role}: {content}")
 
     return pdf
 
