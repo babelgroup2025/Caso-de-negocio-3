@@ -20,10 +20,12 @@ client = OpenAI(api_key=api_key)
 def soft_wrap(text: str, max_len: int = 40) -> str:
     """
     Corta cualquier 'palabra' sin espacios que exceda max_len (ej. URLs/tokens).
-    Inserta saltos de línea para que FPDF pueda renderizar.
+    Reemplaza saltos de línea por espacios para que nunca quede un bloque
+    imposible de partir para FPDF.
     """
     if not isinstance(text, str):
         text = str(text)
+    text = text.replace("\r", " ").replace("\n", " ")  # ← clave
     out = []
     for tok in text.split(" "):
         if len(tok) > max_len:
@@ -257,8 +259,8 @@ def build_pdf(data_dict, messages, puntos, porcentaje, clasificacion, detalle):
     for msg in messages:
         if msg["role"] in ["user", "assistant"]:
             role = "Cliente" if msg["role"] == "user" else "Asistente"
-            content = msg["content"]
-            safe_content = clean_for_pdf(content)   # 👈 importante
+            content = msg.get("content", "")
+            safe_content = clean_for_pdf(content)   # 👈 siempre limpiamos
             pdf.multi_cell(0, 8, f"{role}: {safe_content}", align="L")
 
     return pdf
