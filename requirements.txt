@@ -1,5 +1,5 @@
 streamlit
-openai>=1.30.0
+openai>=1.32.0
 fpdf2
 requests
 beautifulsoup4
