@@ -1,20 +1,18 @@
-# pages/4_Desarrollo_y_Pruebas.py
-# Fase 4: Checklist + Chat + Generación de PDF (con soporte de acentos via DejaVuSans.ttf)
-
+# pages/4_Desarrollo_y_Pruebas.py – Checklist + Chat + Generación/descarga de PDF
 import os
 import streamlit as st
 from fpdf import FPDF
 from openai import OpenAI
 
-st.set_page_config(page_title="Fase 4 - Desarrollo/Pruebas", layout="wide")
+st.set_page_config(page_title="Fase 4 - Desarrollo y Pruebas", layout="wide")
 st.title("🛠️ Fase 4: Desarrollo y Pruebas")
 
-# --- Guardas de flujo (necesita haber pasado Fase 1) ---
+# Guardas de flujo
 if not st.session_state.get("evaluacion_ok", False):
-    st.warning("La oportunidad no alcanzó 70% en Evaluación. Ve a **Fase 1** primero.")
+    st.warning("La oportunidad no alcanzó 70% en Evaluación. Ve a **Fase 1**.")
     st.stop()
 
-# --- Estado base ---
+# Estado compartido
 st.session_state.setdefault("ready_for_pdf", False)
 st.session_state.setdefault("dev_checklist", {
     "casos_uso": False,
@@ -22,22 +20,31 @@ st.session_state.setdefault("dev_checklist", {
     "riesgos": False,
     "aprobacion": False,
 })
-st.session_state.setdefault("dev_chat", [])      # historial de chat
-st.session_state.setdefault("devtest", {})       # notas de pruebas opcionales
+st.session_state.setdefault("dev_chat", [])
+st.session_state.setdefault("devtest", {})  # devtest['notas']
 
-# ----------------- Utilidades PDF -----------------
-FONT_PATH = "DejaVuSans.ttf"  # Debe existir en la raíz del repo (tú ya lo subiste)
+FONT_PATH = "DejaVuSans.ttf"
 
-def clean(t: str) -> str:
-    if not t:
+def clean_text(text: str) -> str:
+    if not text:
         return ""
-    return str(t).replace("\r", "").replace("\x00", "").strip()
+    t = str(text).replace("\r", " ").replace("\x00", "")
+    return t if t.strip() else " "
+
+def pdf_header(pdf: FPDF, title: str):
+    if os.path.exists("logo_babel.jpeg"):
+        try:
+            pdf.image("logo_babel.jpeg", x=10, y=8, w=28)
+        except Exception:
+            pass
+    pdf.ln(10)
+    pdf.set_font_size(18)
+    pdf.cell(0, 10, clean_text(title), ln=1, align="C")
+    pdf.set_font_size(11)
+    pdf.cell(0, 7, clean_text("Reporte generado desde Fase 4 (Desarrollo y Pruebas)"), ln=1, align="C")
+    pdf.ln(4)
 
 def build_pdf() -> str:
-    """
-    Construye el PDF con datos de todas las fases y lo guarda en disco.
-    Retorna la ruta del archivo generado.
-    """
     score = st.session_state.get("score_total", 0)
     eval_answers = st.session_state.get("eval_answers", {})
     diseno = st.session_state.get("diseno", {})
@@ -55,173 +62,132 @@ def build_pdf() -> str:
     pdf = FPDF()
     pdf.add_page()
 
-    # Fuente unicode para acentos/ñ
     if os.path.exists(FONT_PATH):
         pdf.add_font("DejaVu", "", FONT_PATH, uni=True)
         pdf.set_font("DejaVu", "", 14)
     else:
-        # Fallback (Arial no imprime bien acentos, pero evita crash si no está la TTF)
         pdf.set_font("Arial", "", 14)
 
-    # Logo (si existe)
-    if os.path.exists("logo_babel.jpeg"):
-        try:
-            pdf.image("logo_babel.jpeg", x=10, y=8, w=28)
-        except Exception:
-            pass
-    pdf.ln(10)
+    pdf_header(pdf, "Caso de Negocio - Babel")
 
-    pdf.set_font_size(18)
-    pdf.cell(0, 10, clean("Caso de Negocio - Babel"), ln=1, align="C")
-    pdf.set_font_size(11)
-    pdf.cell(0, 7, clean("Reporte generado desde Fase 4 (Desarrollo y Pruebas)"), ln=1, align="C")
-    pdf.ln(5)
-
-    # Resumen general
     pdf.set_font_size(12)
-    pdf.multi_cell(0, 7, clean(f"Score de Evaluación (Fase 1): {score}%"))
-    pdf.multi_cell(0, 7, clean(f"Proyectos en memoria: {len(proyectos)}"))
-    pdf.multi_cell(0, 7, clean(f"Listo para PDF (Fase 4): {'Sí' if st.session_state.get('ready_for_pdf') else 'No'}"))
-    pdf.ln(3)
+    pdf.multi_cell(190, 8, clean_text(f"Score de Evaluación (Fase 1): {score}%"), align="L")
+    pdf.multi_cell(190, 8, clean_text(f"Proyectos en memoria: {len(proyectos)}"), align="L")
+    pdf.multi_cell(190, 8, clean_text(f"Listo para PDF (Fase 4): {'Sí' if st.session_state.get('ready_for_pdf') else 'No'}"), align="L")
+    pdf.ln(2)
 
-    # Sección: detalle de evaluación
     pdf.set_font_size(14)
-    pdf.cell(0, 8, clean("Evaluación (detalle)"), ln=1)
+    pdf.cell(0, 8, clean_text("Evaluación (detalle)"), ln=1)
     pdf.set_font_size(11)
     for k, texto, peso in detalle_preguntas:
         r = eval_answers.get(k, "No")
         pts = peso if r == "Sí" else 0
-        pdf.multi_cell(0, 6, clean(f"• {texto} → {r} (peso {peso}, pts {pts})"))
-    pdf.ln(3)
+        pdf.multi_cell(190, 6, clean_text(f"• {texto} → {r} (peso {peso}, pts {pts})"), align="L")
+    pdf.ln(2)
 
-    # Sección: Diseño (si existe)
     if diseno:
         pdf.set_font_size(14)
-        pdf.cell(0, 8, clean("Diseño de la solución (resumen)"), ln=1)
+        pdf.cell(0, 8, clean_text("Diseño de la solución (resumen)"), ln=1)
         pdf.set_font_size(11)
         for k, v in diseno.items():
-            pdf.multi_cell(0, 6, clean(f"• {k}: {v}"))
-        pdf.ln(3)
+            pdf.multi_cell(190, 6, clean_text(f"• {k}: {v}"), align="L")
+        pdf.ln(2)
 
-    # Sección: Notas de pruebas (fase 4)
     if notas:
         pdf.set_font_size(14)
-        pdf.cell(0, 8, clean("Notas de desarrollo/pruebas"), ln=1)
+        pdf.cell(0, 8, clean_text("Notas de desarrollo/pruebas"), ln=1)
         pdf.set_font_size(11)
-        pdf.multi_cell(0, 6, clean(notas))
-        pdf.ln(3)
+        pdf.multi_cell(190, 6, clean_text(notas), align="L")
+        pdf.ln(2)
 
-    # (Opcional) anexo con últimos mensajes del chat
-    chat = st.session_state.get("dev_chat", [])[-6:]  # últimos 6 turnos
+    chat = st.session_state.get("dev_chat", [])[-6:]
     if chat:
         pdf.set_font_size(14)
-        pdf.cell(0, 8, clean("Anexo: Fragmento de conversación (Fase 4)"), ln=1)
+        pdf.cell(0, 8, clean_text("Anexo: Conversación (Fase 4)"), ln=1)
         pdf.set_font_size(11)
         for m in chat:
             role = "Cliente" if m["role"] == "user" else "Agente"
-            pdf.multi_cell(0, 6, clean(f"{role}: {m['content']}"))
-        pdf.ln(3)
+            pdf.multi_cell(190, 6, clean_text(f"{role}: {m['content']}"), align="L")
+        pdf.ln(2)
 
-    output_path = "caso_negocio_babel.pdf"
-    pdf.output(output_path)
-    return output_path
+    out = "caso_negocio_babel.pdf"
+    pdf.output(out)
+    return out
 
-# ----------------- UI -----------------
 left, right = st.columns([1, 2], gap="large")
 
-# --------- Columna izquierda: checklist y “Listo para PDF” ----------
 with left:
     st.subheader("Checklist de preparación")
-    st.caption("Marca los puntos cuando estén listos. Luego podrás generar el PDF aquí mismo.")
+    st.caption("Marca los puntos. Cuando todo esté listo, podrás generar el PDF aquí mismo.")
 
-    st.session_state["dev_checklist"]["casos_uso"] = st.checkbox("✅ Casos de uso definidos", value=st.session_state["dev_checklist"]["casos_uso"])
-    st.session_state["dev_checklist"]["pruebas"]  = st.checkbox("✅ Criterios de prueba definidos", value=st.session_state["dev_checklist"]["pruebas"])
-    st.session_state["dev_checklist"]["riesgos"]  = st.checkbox("✅ Riesgos y mitigaciones", value=st.session_state["dev_checklist"]["riesgos"])
-    st.session_state["dev_checklist"]["aprobacion"] = st.checkbox("✅ Aprobación interna", value=st.session_state["dev_checklist"]["aprobacion"])
+    dc = st.session_state["dev_checklist"]
+    dc["casos_uso"]  = st.checkbox("✅ Casos de uso definidos", value=dc["casos_uso"])
+    dc["pruebas"]    = st.checkbox("✅ Criterios de prueba definidos", value=dc["pruebas"])
+    dc["riesgos"]    = st.checkbox("✅ Riesgos y mitigaciones", value=dc["riesgos"])
+    dc["aprobacion"] = st.checkbox("✅ Aprobación interna", value=dc["aprobacion"])
 
-    all_ok = all(st.session_state["dev_checklist"].values())
-
+    all_ok = all(dc.values())
     st.markdown("---")
-    if all_ok:
-        st.success("✅ Checklist completo.")
-    else:
-        st.info("Completa el checklist para poder marcar **Listo para PDF** y generar el documento.")
+    st.success("✅ Checklist completo.") if all_ok else st.info("Completa el checklist para habilitar el PDF.")
 
-    # Botón: marcar listo
     if st.button("📄 Marcar **Listo para PDF**"):
         if all_ok:
             st.session_state["ready_for_pdf"] = True
-            st.success("¡Perfecto! Marcado como **Listo para PDF**.")
-            st.rerun()  # refresca para que se vea el estado actualizado
+            st.success("¡Listo para PDF marcado!")
+            st.rerun()
         else:
-            st.warning("Faltan puntos del checklist.")
+            st.warning("Aún faltan puntos del checklist.")
 
-    st.metric("Listo para PDF", "✅ Sí" if st.session_state["ready_for_pdf"] else "❌ No")
+    st.metric("Listo para PDF", "Sí" if st.session_state["ready_for_pdf"] else "No")
     st.markdown("---")
 
-    # Botón: Generar PDF aquí mismo (solo si está listo)
-    disabled_pdf = not st.session_state["ready_for_pdf"]
-    if disabled_pdf:
+    if not st.session_state["ready_for_pdf"]:
         st.button("⬇️ Generar PDF (habilitado al marcar 'Listo para PDF')", disabled=True)
     else:
         if st.button("⬇️ Generar PDF (desde Fase 4)"):
-            # Validación de fuente unicode
             if not os.path.exists(FONT_PATH):
-                st.error(f"No se encontró **{FONT_PATH}** en la raíz del repo. Súbela para que salgan bien los acentos.")
+                st.error("No se encontró **DejaVuSans.ttf** en la raíz del repo.")
             else:
                 try:
-                    pdf_path = build_pdf()
-                    with open(pdf_path, "rb") as f:
-                        st.download_button(
-                            label="Descargar archivo PDF",
-                            data=f,
-                            file_name="caso_negocio_babel.pdf",
-                            mime="application/pdf"
-                        )
+                    path = build_pdf()
+                    with open(path, "rb") as f:
+                        st.download_button("Descargar archivo PDF", f, file_name="caso_negocio_babel.pdf",
+                                           mime="application/pdf")
                     st.success("PDF generado correctamente.")
                 except Exception as e:
                     st.error(f"Error al generar el PDF: {e}")
 
-# --------- Columna derecha: chat del agente ----------
 with right:
-    st.subheader("💬 Chat con el agente (soporte técnico/funcional)")
+    st.subheader("💬 Chat con el agente")
 
-    # Preparar cliente OpenAI
     api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
     if not api_key:
-        st.info("Agrega tu **OPENAI_API_KEY** en *Settings → Secrets* para usar el chat.")
+        st.info("Agrega tu **OPENAI_API_KEY** en Settings → Secrets para usar el chat.")
     else:
         client = OpenAI(api_key=api_key)
 
-        # Contexto del proyecto
         score = st.session_state.get("score_total", 0)
         eval_answers = st.session_state.get("eval_answers", {})
         diseno = st.session_state.get("diseno", {})
         proyectos = st.session_state.get("proyectos", [])
 
         system_prompt = f"""
-Eres un asistente técnico de Babel. Ayudas a cerrar la Fase 4 (desarrollo/pruebas) del caso de negocio.
+Eres un asistente técnico de Babel. Ayudas a cerrar la Fase 4 (desarrollo/pruebas).
 Contexto:
-- Score de evaluación: {score}%
+- Score evaluación: {score}%
 - Respuestas evaluación: {eval_answers}
 - Diseño: {diseno}
 - Proyectos en memoria: {len(proyectos)}
-Da respuestas concretas con listas; si piden pruebas, entrega casos de prueba y criterios de aceptación.
+Responde con listas claras y criterios de aceptación cuando pidan pruebas.
 """
 
-        # Historial
         with st.container(height=420, border=True):
             if not st.session_state["dev_chat"]:
                 st.markdown("> 👇 Escribe tu primera pregunta en el cuadro de abajo.")
             for m in st.session_state["dev_chat"]:
-                if m["role"] == "user":
-                    with st.chat_message("user"):
-                        st.write(m["content"])
-                else:
-                    with st.chat_message("assistant"):
-                        st.write(m["content"])
+                with st.chat_message("user" if m["role"] == "user" else "assistant"):
+                    st.write(m["content"])
 
-        # Entrada
         user_msg = st.chat_input("Pregunta al agente…")
         if user_msg:
             st.session_state["dev_chat"].append({"role": "user", "content": user_msg})
@@ -235,7 +201,6 @@ Da respuestas concretas con listas; si piden pruebas, entrega casos de prueba y 
                 answer = resp.choices[0].message.content.strip()
             except Exception as e:
                 answer = f"Hubo un error llamando a la API: {e}"
-
             st.session_state["dev_chat"].append({"role": "assistant", "content": answer})
             st.rerun()
 
@@ -244,8 +209,8 @@ Da respuestas concretas con listas; si piden pruebas, entrega casos de prueba y 
             st.session_state["dev_chat"] = []
             st.rerun()
 
-        with st.expander("📎 Guardar notas de pruebas en el estado (opcional)"):
-            notas = st.text_area("Pega aquí notas/criterios de prueba a conservar", height=140)
-            if st.button("Guardar notas en estado"):
+        with st.expander("📎 Guardar notas de pruebas (opcional)"):
+            notas = st.text_area("Notas/criterios de prueba", height=140)
+            if st.button("Guardar notas"):
                 st.session_state["devtest"]["notas"] = notas
-                st.success("Notas guardadas; se incluyen en el PDF.")
+                st.success("Notas guardadas; se incluirán en el PDF.")
