@@ -1,5 +1,5 @@
-# pages/4_Desarrollo_y_Pruebas.py – Checklist + Chat + PDF + Inteligencia Competitiva con RAG
-import os, re, json, math, time
+# pages/4_Desarrollo_y_Pruebas.py – RAG + Chat + Caso de Negocio guiado + Checklist + PDF
+import os, re, json
 import requests
 import numpy as np
 import streamlit as st
@@ -22,11 +22,13 @@ st.session_state.setdefault("dev_checklist", {"casos_uso": False, "pruebas": Fal
 st.session_state.setdefault("dev_chat", [])
 st.session_state.setdefault("devtest", {})                # devtest['notas']
 st.session_state.setdefault("competitive", {})            # {'comparison': str}
-st.session_state.setdefault("rag_loaded", False)
+st.session_state.setdefault("caso_negocio", {})
+st.session_state.setdefault("cn_resumen_md", None)
+st.session_state.setdefault("cn_redaccion_md", None)
 
 # -------------------- Constantes/paths --------------------
 FONT_PATH = "DejaVuSans.ttf"
-INDEX_PATH = "rag_competencia.json"           # aquí se guarda el índice
+INDEX_PATH = "rag_competencia.json"           # índice persistente
 UA = "Mozilla/5.0 (compatible; Babel-Agent/1.0)"
 TIMEOUT = 12
 MAX_PAGES_PER_SITE = 4
@@ -41,7 +43,6 @@ def clean_text(text: str) -> str:
     if not text:
         return ""
     t = str(text).replace("\r", " ").replace("\x00", "")
-    # evita líneas vacías (causaban 'single character' en FPDF)
     return t if t.strip() else " "
 
 def pdf_header(pdf: FPDF, title: str):
@@ -102,8 +103,7 @@ def harvest_site(base_url: str) -> str:
     return (" ".join([t for t in texts if t])[:MAX_CHARS_PER_SITE]).strip()
 
 def chunk_text(t: str, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP):
-    chunks=[]
-    i=0
+    chunks=[]; i=0
     while i < len(t):
         chunk = t[i:i+size]
         chunks.append(chunk)
@@ -124,7 +124,7 @@ def load_index():
     if os.path.exists(INDEX_PATH):
         with open(INDEX_PATH,"r",encoding="utf-8") as f:
             return json.load(f)
-    return {"sources": []}  # [{name,url,chunks:[{text,emb}] }]
+    return {"sources": []}
 
 def save_index(index):
     with open(INDEX_PATH,"w",encoding="utf-8") as f:
@@ -137,7 +137,6 @@ def add_site_to_index(client: OpenAI, index: dict, name: str, url: str):
     texts = chunk_text(raw)
     embs  = embed_texts(client, texts)
     entry = {"name": name or url, "url": url, "chunks": [{"text": t, "emb": e} for t, e in zip(texts, embs)]}
-    # sustituye si ya existe
     index["sources"] = [s for s in index["sources"] if s["url"] != url]
     index["sources"].append(entry)
     save_index(index)
@@ -152,7 +151,6 @@ def retrieve(index, client: OpenAI, query: str, k=TOP_K):
             scored.append((sim, src["name"], src["url"], ch["text"]))
     scored.sort(key=lambda x: x[0], reverse=True)
     results = scored[:k]
-    # agrupado breve para mostrar
     grouped = {}
     for sim, name, url, text in results:
         grouped.setdefault((name,url), []).append((sim,text))
@@ -160,17 +158,16 @@ def retrieve(index, client: OpenAI, query: str, k=TOP_K):
 
 # -------------------- LLM sobre RAG --------------------
 def compare_with_rag(client: OpenAI, grouped_results, extra_context: str):
-    # arma un contexto compacto por empresa
     bullets=[]
     for (name,url), pairs in grouped_results.items():
         top = "\n".join(f"- {t[:350]}" for _, t in pairs[:3])
         bullets.append(f"◼ {name} ({url}):\n{top}")
     context = "\n\n".join(bullets) or "No hay contexto recuperado."
-    sys = ("Eres consultor senior de preventa. Con el contexto recuperado (RAG) compara a los competidores "
+    sys = ("Eres consultor senior de preventa. Con el contexto recuperado (RAG) compara competidores "
            "y propone una estrategia ganadora para Babel: (1) fortalezas/debilidades por empresa, "
            "(2) tabla rápida de diferenciadores, (3) propuesta final (alcance+KPIs).")
-    user = (f"Contexto adicional del cliente/proyecto:\n{extra_context or 'N/A'}\n\n"
-            f"Contexto recuperado (fragmentos relevantes por empresa):\n{context}\n\n"
+    user = (f"Contexto del cliente/proyecto:\n{extra_context or 'N/A'}\n\n"
+            f"Contexto recuperado:\n{context}\n\n"
             "Entrega la comparativa y propuesta en bullets y subtítulos claros.")
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -230,8 +227,49 @@ def build_pdf() -> str:
         pdf.set_font_size(14); pdf.cell(0,8,clean_text("Notas de desarrollo/pruebas"), ln=1)
         pdf.set_font_size(11); pdf.multi_cell(190,6,clean_text(notas), align="L"); pdf.ln(2)
 
-    # Fuentes del índice
-    idx = index.get("sources", [])
+    # --- Caso de Negocio (si existe) ---
+    cn = st.session_state.get("caso_negocio", {})
+    cn_resumen = st.session_state.get("cn_resumen_md")
+    cn_redaccion = st.session_state.get("cn_redaccion_md")
+    if cn or cn_resumen or cn_redaccion:
+        pdf.set_font_size(14); pdf.cell(0, 8, clean_text("Caso de Negocio"), ln=1)
+        pdf.set_font_size(11)
+        if cn_resumen:
+            for line in cn_resumen.splitlines():
+                pdf.multi_cell(190, 6, clean_text(line), align="L")
+            pdf.ln(2)
+        else:
+            mapping = [
+                ("Objetivos de negocio", "objetivos_negocio"),
+                ("Problema a resolver", "problema"),
+                ("Solución esperada", "solucion_esperada"),
+                ("Target (usuarios)", "target"),
+                ("Funcionalidades esperadas", "funcionalidades"),
+                ("Expectativas", "expectativas"),
+                ("Experiencia previa", "experiencia_previa"),
+                ("Forma de adjudicación", "adjudicacion"),
+                ("Criterios de evaluación", "criterios_eval"),
+                ("Fecha de lanzamiento", "fecha_lanzamiento"),
+                ("Rango de presupuesto", "rango_presupuesto"),
+                ("Caso de negocio (narrativo)", "caso_negocio"),
+                ("Nombre del proyecto", "nombre_proyecto"),
+                ("Notas generales", "notas"),
+            ]
+            for label, key in mapping:
+                val = clean_text(cn.get(key, "—"))
+                pdf.multi_cell(190, 6, clean_text(f"• {label}: {val}"), align="L")
+            pdf.ln(2)
+
+        if cn_redaccion:
+            pdf.set_font_size(12)
+            pdf.multi_cell(190, 6, clean_text("— Redacción ejecutiva (IA) —"), align="L")
+            pdf.set_font_size(11)
+            for line in cn_redaccion.splitlines():
+                pdf.multi_cell(190, 6, clean_text(line), align="L")
+            pdf.ln(2)
+
+    # Fuentes del índice (RAG)
+    idx = load_index().get("sources", [])
     if idx:
         pdf.set_font_size(14); pdf.cell(0,8,clean_text("Base de conocimiento (RAG) – Fuentes"), ln=1)
         pdf.set_font_size(11)
@@ -239,6 +277,8 @@ def build_pdf() -> str:
             pdf.multi_cell(190,6,clean_text(f"◼ {s['name']} – {s['url']} ({len(s['chunks'])} fragmentos)"), align="L")
         pdf.ln(2)
 
+    # Comparativa/propuesta del RAG
+    comp_text = st.session_state.get("competitive", {}).get("comparison", "")
     if comp_text:
         pdf.set_font_size(14); pdf.cell(0,8,clean_text("Comparativa y propuesta para Babel (RAG)"), ln=1)
         pdf.set_font_size(11); pdf.multi_cell(190,6,clean_text(comp_text), align="L"); pdf.ln(2)
@@ -248,26 +288,24 @@ def build_pdf() -> str:
     return out
 
 # -------------------- UI (Tabs) --------------------
-tab_kb, tab_qa, tab_chat, tab_pdf = st.tabs([
-    "📚 Base de conocimiento (RAG)", "🔎 Consultar/Comparar", "💬 Chat", "✅ Checklist y PDF"
+tab_kb, tab_qa, tab_cn, tab_chat, tab_pdf = st.tabs([
+    "📚 Base de conocimiento (RAG)", "🔎 Consultar/Comparar", "🧾 Caso de Negocio (chat guiado)", "💬 Chat", "✅ Checklist y PDF"
 ])
 
 # ===== TAB 1: Construir/gestionar índice =====
 with tab_kb:
     st.subheader("📚 Base de conocimiento (RAG) – Babel y competidores")
-    st.caption("Indexa una vez y reutiliza siempre. Puedes actualizar cuando cambien los sitios.")
+    st.caption("Indexa una vez y reutiliza. Puedes actualizar cuando cambien los sitios.")
 
     client = get_client()
     index = load_index()
-    st.session_state["rag_loaded"] = True
 
     col1, col2 = st.columns([1,1])
     with col1:
         name = st.text_input("Nombre (ej. Babel)", value="Babel")
         url = st.text_input("URL raíz", value="https://www.babelgroup.com/")
         if st.button("➕ Indexar/Actualizar este sitio"):
-            if not client:
-                st.stop()
+            if not client: st.stop()
             ok,msg = add_site_to_index(client, index, name.strip(), url.strip())
             st.success(msg) if ok else st.error(msg)
 
@@ -275,8 +313,7 @@ with tab_kb:
         multi = st.text_area("Varias URLs (una por línea, formato: Nombre|URL)",
                              placeholder="Accenture|https://www.accenture.com/\nIBM Consulting|https://www.ibm.com/consulting/")
         if st.button("📥 Indexar en lote"):
-            if not client:
-                st.stop()
+            if not client: st.stop()
             total_ok=0; fails=[]
             for line in multi.splitlines():
                 if "|" not in line: continue
@@ -310,18 +347,16 @@ with tab_qa:
 
     client = get_client()
     if st.button("🧠 Generar comparativa con RAG"):
-        if not client:
-            st.stop()
+        if not client: st.stop()
         index = load_index()
         if not index.get("sources"):
-            st.error("No hay fuentes en el índice. Ve a la pestaña **Base de conocimiento** para indexar.")
+            st.error("No hay fuentes en el índice. Ve a **Base de conocimiento** para indexar.")
             st.stop()
 
         results, grouped = retrieve(index, client, query, k=TOP_K)
         if not results:
             st.error("No se recuperó contexto.")
         else:
-            # Muestra fuentes top
             with st.expander("Ver fragmentos recuperados"):
                 for (name,url), pairs in grouped.items():
                     st.markdown(f"**{name}** – {url}")
@@ -336,19 +371,138 @@ with tab_qa:
             st.markdown("### Resultado (propuesta para Babel)")
             st.write(comp)
 
-# ===== TAB 3: Chat libre (contexto general del proyecto) =====
+# ===== TAB 3: Caso de Negocio (chat guiado) =====
+with tab_cn:
+    st.subheader("🧾 Caso de Negocio — Captura guiada por chat")
+
+    st.session_state.setdefault("cn_idx", 0)
+    st.session_state.setdefault("cn_done", False)
+    st.session_state.setdefault("cn_chat", [])
+
+    CN_QUESTIONS = [
+        ("objetivos_negocio", "¿Cuáles son los objetivos de negocio?"),
+        ("problema", "¿Cuál es el problema a resolver?"),
+        ("solucion_esperada", "¿Cuál es la solución esperada?"),
+        ("target", "¿Quién va a utilizar la solución? – TARGET"),
+        ("funcionalidades", "¿Qué funcionalidades espera tener?"),
+        ("expectativas", "¿Qué expectativas tiene con esta solución?"),
+        ("experiencia_previa", "¿Ha tenido experiencia previa similar a este proyecto?"),
+        ("adjudicacion", "¿Cuál es la forma de adjudicación?"),
+        ("criterios_eval", "¿Cuáles son los criterios de evaluación?"),
+        ("fecha_lanzamiento", "¿Cuál sería la fecha de lanzamiento?"),
+        ("rango_presupuesto", "¿Cuál es el rango del presupuesto?"),
+        ("caso_negocio", "Caso de negocio (resumen narrativo corto)"),
+        ("nombre_proyecto", "Nombre de proyecto"),
+        ("notas", "Notas generales"),
+    ]
+
+    # Historial visual
+    with st.container(height=380, border=True):
+        if not st.session_state["cn_chat"]:
+            st.markdown("> 👋 Empecemos. Te haré preguntas para construir el Caso de Negocio.")
+        for m in st.session_state["cn_chat"]:
+            with st.chat_message(m["role"]):
+                st.write(m["content"])
+
+    if not st.session_state["cn_done"]:
+        clave, pregunta = CN_QUESTIONS[st.session_state["cn_idx"]]
+        if not st.session_state["cn_chat"] or st.session_state["cn_chat"][-1]["role"] != "assistant":
+            st.session_state["cn_chat"].append({"role": "assistant", "content": pregunta})
+
+        user_msg = st.chat_input("Responde aquí…")
+        if user_msg:
+            st.session_state["cn_chat"].append({"role": "user", "content": user_msg})
+            st.session_state["caso_negocio"][clave] = user_msg.strip()
+            st.session_state["cn_idx"] += 1
+            if st.session_state["cn_idx"] >= len(CN_QUESTIONS):
+                st.session_state["cn_done"] = True
+                st.session_state["cn_chat"].append({"role":"assistant","content":"✅ ¡Listo! Ya tengo toda la información. Abajo puedes generar el resumen."})
+            else:
+                siguiente = CN_QUESTIONS[st.session_state["cn_idx"]][1]
+                st.session_state["cn_chat"].append({"role": "assistant", "content": siguiente})
+            st.experimental_rerun()
+    else:
+        st.success("Formulario completo. Puedes revisar/editar debajo o generar la redacción ejecutiva.")
+
+    # Ver/editar respuestas
+    with st.expander("📝 Ver y editar respuestas capturadas"):
+        for clave, label in CN_QUESTIONS:
+            val = st.session_state["caso_negocio"].get(clave, "")
+            st.session_state["caso_negocio"][clave] = st.text_area(label, val, height=80, key=f"cn_edit_{clave}")
+        st.caption("Los cambios se guardan en el estado y se usarán en el PDF.")
+
+    # Resumen estructurado (sin IA)
+    def build_cn_resumen_md(cn: dict) -> str:
+        def g(k): return (cn.get(k, "—") or "—").strip() or "—"
+        return f"""### Caso de Negocio — Resumen Estructurado
+
+- **Objetivos de negocio:** {g('objetivos_negocio')}
+- **Problema a resolver:** {g('problema')}
+- **Solución esperada:** {g('solucion_esperada')}
+- **Target (usuarios):** {g('target')}
+- **Funcionalidades esperadas:** {g('funcionalidades')}
+- **Expectativas:** {g('expectativas')}
+- **Experiencia previa:** {g('experiencia_previa')}
+- **Forma de adjudicación:** {g('adjudicacion')}
+- **Criterios de evaluación:** {g('criterios_eval')}
+- **Fecha de lanzamiento:** {g('fecha_lanzamiento')}
+- **Rango de presupuesto:** {g('rango_presupuesto')}
+- **Caso de negocio (narrativo):** {g('caso_negocio')}
+- **Nombre del proyecto:** {g('nombre_proyecto')}
+- **Notas generales:** {g('notas')}
+"""
+
+    colA, colB, colC = st.columns(3)
+    if colA.button("🧩 Generar resumen estructurado"):
+        st.session_state["cn_resumen_md"] = build_cn_resumen_md(st.session_state["caso_negocio"])
+        st.success("Resumen estructurado generado.")
+    if colB.button("🧹 Reiniciar conversación"):
+        st.session_state["cn_chat"] = []
+        st.session_state["caso_negocio"] = {}
+        st.session_state["cn_idx"] = 0
+        st.session_state["cn_done"] = False
+        st.session_state["cn_resumen_md"] = None
+        st.session_state["cn_redaccion_md"] = None
+        st.experimental_rerun()
+
+    # Redacción ejecutiva con IA (opcional)
+    api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+    if api_key and colC.button("🤖 Redacción ejecutiva (IA)"):
+        client = OpenAI(api_key=api_key)
+        brief = st.session_state.get("cn_resumen_md") or build_cn_resumen_md(st.session_state["caso_negocio"])
+        sys = "Eres consultor senior. Redacta una síntesis ejecutiva clara y persuasiva (máx 300-400 palabras)."
+        user = f"Base del caso de negocio:\n\n{brief}"
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role":"system","content":sys},{"role":"user","content":user}],
+                temperature=0.3,
+            )
+            st.session_state["cn_redaccion_md"] = resp.choices[0].message.content.strip()
+            st.success("Redacción ejecutiva generada.")
+        except Exception as e:
+            st.error(f"Error IA: {e}")
+
+    if st.session_state.get("cn_resumen_md"):
+        st.markdown("### 📄 Resumen Estructurado")
+        st.markdown(st.session_state["cn_resumen_md"])
+    if st.session_state.get("cn_redaccion_md"):
+        st.markdown("### 🧠 Redacción Ejecutiva (IA)")
+        st.markdown(st.session_state["cn_redaccion_md"])
+
+    st.info("El resumen y la redacción (si existe) se incluirán en el PDF final.")
+
+# ===== TAB 4: Chat libre (contexto general del proyecto) =====
 with tab_chat:
     st.subheader("💬 Chat con el agente")
-    api_client = get_client()
-    if not api_client:
-        st.stop()
+    client = get_client()
+    if client:
+        score = st.session_state.get("score_total", 0)
+        eval_answers = st.session_state.get("eval_answers", {})
+        diseno = st.session_state.get("diseno", {})
+        proyectos = st.session_state.get("proyectos", [])
 
-    score = st.session_state.get("score_total", 0)
-    eval_answers = st.session_state.get("eval_answers", {})
-    diseno = st.session_state.get("diseno", {})
-    proyectos = st.session_state.get("proyectos", [])
-
-    system_prompt = f"""
+        system_prompt = f"""
 Eres un asistente técnico de Babel. Ayudas a cerrar la Fase 4 (desarrollo/pruebas).
 Contexto:
 - Score evaluación: {score}%
@@ -358,34 +512,38 @@ Contexto:
 Responde con listas claras y criterios de aceptación cuando pidan pruebas.
 """
 
-    with st.container(height=420, border=True):
-        if not st.session_state["dev_chat"]:
-            st.markdown("> 👇 Escribe tu primera pregunta…")
-        for m in st.session_state["dev_chat"]:
-            with st.chat_message("user" if m["role"] == "user" else "assistant"):
-                st.write(m["content"])
+        with st.container(height=420, border=True):
+            if not st.session_state["dev_chat"]:
+                st.markdown("> 👇 Escribe tu primera pregunta…")
+            for m in st.session_state["dev_chat"]:
+                with st.chat_message("user" if m["role"] == "user" else "assistant"):
+                    st.write(m["content"])
 
-    user_msg = st.chat_input("Pregunta al agente…")
-    if user_msg:
-        st.session_state["dev_chat"].append({"role": "user", "content": user_msg})
-        msgs = [{"role":"system","content": system_prompt}] + st.session_state["dev_chat"]
-        try:
-            resp = api_client.chat.completions.create(model="gpt-4o-mini", messages=msgs, temperature=0.3)
-            answer = resp.choices[0].message.content.strip()
-        except Exception as e:
-            answer = f"Error API: {e}"
-        st.session_state["dev_chat"].append({"role": "assistant", "content": answer})
-        st.experimental_rerun()
+        user_msg = st.chat_input("Pregunta al agente…")
+        if user_msg:
+            st.session_state["dev_chat"].append({"role": "user", "content": user_msg})
+            msgs = [{"role":"system","content": system_prompt}] + st.session_state["dev_chat"]
+            try:
+                resp = client.chat.completions.create(model="gpt-4o-mini", messages=msgs, temperature=0.3)
+                answer = resp.choices[0].message.content.strip()
+            except Exception as e:
+                answer = f"Error API: {e}"
+            st.session_state["dev_chat"].append({"role": "assistant", "content": answer})
+            st.experimental_rerun()
 
-    c1, c2 = st.columns(2)
-    if c1.button("🧹 Limpiar chat"): st.session_state["dev_chat"] = []; st.experimental_rerun()
-    with st.expander("📎 Notas de pruebas (se incluyen en PDF)"):
-        notas = st.text_area("Notas/criterios", height=140, value=st.session_state.get("devtest",{}).get("notas",""))
-        if st.button("Guardar notas"):
-            st.session_state.setdefault("devtest", {})["notas"] = notas
-            st.success("Notas guardadas.")
+        cols = st.columns(2)
+        if cols[0].button("🧹 Limpiar chat"):
+            st.session_state["dev_chat"] = []
+            st.experimental_rerun()
+        with st.expander("📎 Notas de pruebas (se incluyen en PDF)"):
+            notas = st.text_area("Notas/criterios", height=140, value=st.session_state.get("devtest",{}).get("notas",""))
+            if st.button("Guardar notas"):
+                st.session_state.setdefault("devtest", {})["notas"] = notas
+                st.success("Notas guardadas.")
+    else:
+        st.stop()
 
-# ===== TAB 4: Checklist + PDF =====
+# ===== TAB 5: Checklist + PDF =====
 with tab_pdf:
     st.subheader("✅ Checklist y generación de PDF")
     dc = st.session_state["dev_checklist"]
@@ -399,6 +557,7 @@ with tab_pdf:
         if all_ok:
             st.session_state["ready_for_pdf"] = True
             st.success("¡Listo para PDF marcado!")
+            st.experimental_rerun()
         else:
             st.warning("Faltan puntos del checklist.")
 
