@@ -1,60 +1,56 @@
-# app.py — Portada del Agente Comercial (Streamlit multipágina)
-import os
+# app.py — Navegación y estado global
+
 import streamlit as st
 
-# Configuración básica
-st.set_page_config(
-    page_title="Caso de Negocio - Agente Babel",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="Agente Comercial Babel", page_icon="🧭", layout="wide")
 
-# Estado compartido para las páginas
-st.session_state.setdefault("score_total", 0)          # de pages/1_Evaluacion.py
-st.session_state.setdefault("proyectos", [])           # de pages/2_Memoria.py
-st.session_state.setdefault("diseno", {})              # de pages/3_Diseno.py
-st.session_state.setdefault("devtest", {})             # de pages/4_Desarrollo_y_Pruebas.py
-st.session_state.setdefault("ready_for_pdf", False)    # se marca en Fase 4
-st.session_state.setdefault("propuesta_md", None)      # propuesta IA opcional
+# ---------- Estado global ----------
+defaults = {
+    "memoria": [],            # lista de leads guardados
+    "lead_activo": None,      # lead seleccionado
+    "score": None,            # porcentaje de calificación (fase 2)
+    "viable": False,          # si score >= 70
+    "case_data": {},          # campos del caso de negocio (fase 3)
+    "propuesta_ia": "",       # texto generado por IA
+    "listo_pdf": False,       # bandera “listo para PDF” si la necesitas luego
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-# Encabezado
-col_logo, col_title = st.columns([1, 5])
-with col_logo:
-    if os.path.exists("logo_babel.jpeg"):
-        st.image("logo_babel.jpeg", use_container_width=True)
-with col_title:
-    st.title("Agente Comercial Babel – Caso de Negocio")
-    st.caption("Flujo: 1) Evaluación → 2) Memoria → 3) Diseño → 4) Desarrollo/Pruebas → (5) PDF")
+# ---------- Cabecera ----------
+st.title("Agente Comercial Babel – Caso de Negocio")
+st.caption("Flujo: 1) Lead & Memoria → 2) Calificación → 3) Caso de negocio + Solución + PDF")
 
-st.divider()
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Score (Fase 2)", f"{st.session_state['score'] or 0}%")
+with col2:
+    st.metric("Leads en memoria", f"{len(st.session_state['memoria'])}")
+with col3:
+    st.metric("Listo para PDF", "Sí" if st.session_state.get("viable") else "No")
 
-# Resumen rápido
-c1, c2, c3 = st.columns(3)
-c1.metric("Score (Evaluación)", f"{st.session_state['score_total']}%")
-c2.metric("Proyectos en memoria", len(st.session_state["proyectos"]))
-c3.metric("Listo para PDF", "Sí" if st.session_state["ready_for_pdf"] else "No")
+st.info("Usa el **menú lateral** para navegar por las 3 páginas.")
 
-st.info(
-    "Usa el **menú lateral** (barra izquierda). Streamlit ya muestra "
-    "automáticamente las páginas que tengas en la carpeta **pages/**:\n\n"
-    "- 1_Evaluacion\n- 2_Memoria\n- 3_Diseno\n- 4_Desarrollo_y_Pruebas\n- (opcional) 5_PDF"
-)
+# ---------- Sidebar ----------
+with st.sidebar:
+    st.header("Navegación")
+    # Estos enlaces aparecen automáticamente si existen los archivos en /pages
+    st.page_link("app.py", label="🏠 Inicio")
+    st.page_link("pages/1_Lead_y_Memoria.py", label="1) Lead & Memoria")
+    st.page_link("pages/2_Calificacion.py", label="2) Calificación")
+    st.page_link("pages/3_Caso_y_Solucion.py", label="3) Caso + Solución + PDF")
 
-with st.expander("📋 ¿Qué hace cada fase?"):
+    st.divider()
+    if st.button("🔁 Reiniciar sesión"):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+# Contenido simple en home
+with st.expander("¿Qué hace cada fase?"):
     st.markdown("""
-**Evaluación**: 5 preguntas ponderadas (20/30/30/5/5).  
-**Memoria**: registrar y consultar proyectos previos.  
-**Diseño**: objetivos, alcance, integraciones, arquitectura, KPIs, riesgos, roadmap.  
-**Desarrollo y Pruebas**: checklist técnico; marcar **Listo para PDF**.  
-**PDF**: genera el documento final (requiere `DejaVuSans.ttf` en la raíz).
+**1) Lead & Memoria:** Captura/selecciona el lead (empresa, contacto, correo, teléfono, descripción) y guarda historial.  
+**2) Calificación:** 5 preguntas ponderadas **20/30/30/5/5**. Si el **score ≥ 70%**, la oportunidad es **viable**.  
+**3) Caso + Solución + PDF:** Completa/auto-genera el caso de negocio, compara con competidores y **descarga el PDF**.
 """)
-
-# Utilidad: reiniciar sesión
-if st.button("♻️ Reiniciar sesión"):
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
-    st.success("Sesión reiniciada. Ve a **1_Evaluacion** desde el menú lateral.")
-    st.rerun()
-
-st.caption("© Babel — Demo de Caso de Negocio con Streamlit")
