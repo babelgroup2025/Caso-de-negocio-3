@@ -295,6 +295,7 @@ with tabs[1]:
 # ============================== TAB C: Competencia & PDF ==============================
 # ============================== TAB C: Competencia & PDF ==============================
 # ============================== TAB C: Competencia & PDF ==============================
+# ============================== TAB C: Competencia & PDF ==============================
 with tabs[2]:
     st.subheader("Competencia & PDF")
 
@@ -303,21 +304,23 @@ with tabs[2]:
     else:
         st.success("✅ Plan de Negocio completo. **Listo para exportar en PDF**.")
 
-        # Asegura que tenemos el markdown del plan
+        # Traer el markdown generado en el Tab B; si no está, volver a construirlo
         plan_md = st.session_state.get("plan_md")
         if not plan_md:
             plan_md, _ = build_plan(st.session_state.case_answers)
 
-        # -- Generar PDF con reportlab --
+        # ---- Generar PDF usando reportlab ----
         from io import BytesIO
         from reportlab.lib.pagesizes import letter
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Image
         from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.utils import ImageReader
 
         pdf_buffer = BytesIO()
-        doc = SimpleDocTemplate(pdf_buffer, pagesize=letter,
-                                leftMargin=50, rightMargin=50, topMargin=80, bottomMargin=50)
+        doc = SimpleDocTemplate(
+            pdf_buffer,
+            pagesize=letter,
+            leftMargin=50, rightMargin=50, topMargin=80, bottomMargin=50
+        )
 
         styles = getSampleStyleSheet()
         story = []
@@ -333,25 +336,25 @@ with tabs[2]:
         story.append(Paragraph("<b>Plan de Negocio – Babel</b>", styles["Title"]))
         story.append(Spacer(1, 12))
 
-        # Texto del plan (markdown simplificado a párrafos)
+        # Pasar el contenido línea por línea (markdown simplificado)
         for line in plan_md.split("\n"):
-            line = line.strip()
-            if not line:
+            t = line.strip()
+            if not t:
                 story.append(Spacer(1, 6))
                 continue
-            # Remueve hashes de encabezados para que no salgan feos en PDF
-            clean = line.lstrip("# ").strip()
-            story.append(Paragraph(clean, styles["Normal"]))
+            t = t.lstrip("# ").strip()  # quitar hashes de encabezado
+            story.append(Paragraph(t, styles["Normal"]))
             story.append(Spacer(1, 6))
 
-        # Construye el PDF
+        # Crear PDF en memoria
         doc.build(story)
         pdf_data = pdf_buffer.getvalue()
 
+        # ✅ Botón SOLO PDF
         st.download_button(
             "⬇️ Descargar Plan de Negocio (PDF)",
             data=pdf_data,
             file_name="Plan_de_Negocio_Babel.pdf",
-            mime="application/pdf",
+            mime="application/pdf",            # si tu navegador sigue abriéndolo raro, usa "application/octet-stream"
             use_container_width=True
         )
