@@ -151,11 +151,13 @@ with tabs[0]:
 # ------------------------- TAB B: Chat del Caso -------------------------
 # ------------------------- TAB B: Chat del Caso (Plan Builder) -------------------------
 # ------------------------- TAB B: Chat del Caso (sin chips, con IA local) -------------------------
+# ------------------------- TAB B: Chat del Caso (enfoque 100% Plan) -------------------------
 with tabs[1]:
+    # Requiere calificación previa
     if st.session_state.get("lead_score", 0) < 70:
         st.warning("⚠️ Primero completa la **calificación** y alcanza al menos **70** para continuar.")
     else:
-        st.success("✅ Lead calificado. Inicia el **chat**: iré construyendo el **Plan de Negocio** en tiempo real.")
+        st.success("✅ Lead calificado. Inicia el **chat**: iré construyendo el **Plan de Negocio** en la derecha.")
 
         # ---------- Estado del chat ----------
         if "case_chat_msgs" not in st.session_state:
@@ -164,12 +166,10 @@ with tabs[1]:
             st.session_state.case_answers = {k: "" for k, _ in QUESTIONS}
         if "case_current_key" not in st.session_state:
             st.session_state.case_current_key = QUESTIONS[0][0]
-        if "score" not in st.session_state:
-            st.session_state.score = 0
         if "ready_for_pdf" not in st.session_state:
-            st.session_state.ready_for_pdf = False
+            st.session_state.ready_for_pdf = False  # seguimos calculándolo internamente
 
-        # -------- utilidades (usamos las de arriba + estas) --------
+        # Utilidades
         def next_unanswered_key():
             for k, _ in QUESTIONS:
                 if not st.session_state.case_answers.get(k,"").strip():
@@ -181,11 +181,10 @@ with tabs[1]:
                 if k == key: return q
             return "¿Algo más?"
 
-        # IA local: reescribe y completa suavemente con inferencias prudentes
+        # IA local: pulido ligero + rellenos prudentes
         def ai_refine(label, text):
             t = (text or "").strip()
             if not t:
-                # sugerencia segura por defecto
                 if label == "funcionalidades":
                     return "MVP con dashboard, gestión de usuarios/roles, alertas y exportación de reportes."
                 if label == "criterios":
@@ -197,13 +196,10 @@ with tabs[1]:
                 if label == "caso":
                     return "Se espera ROI positivo mediante ahorro operativo y mejora de KPIs de servicio."
                 return "Pendiente por confirmar."
-            # pulido breve
             t = t.replace("\n"," ").strip()
-            # añade KPIs si faltan en secciones clave
             if label in ("objetivos","problema","solucion","expectativas","caso") and not has_kpis(t):
                 t += " (Incluir KPIs: ROI esperado, ahorro %, mejora de SLA/MTTR, conversión o NPS/CSAT)."
-            # asegura formato de lista implícita en funcionalidades
-            if label == "funcionalidades" and count_list_items(t) < 2:
+            if label == "funcionalidades" and (t.count(",")+t.count(";")) < 2:
                 t += " (Detalle al menos 3–4 funcionalidades del MVP)."
             return t
 
@@ -227,7 +223,7 @@ with tabs[1]:
             checklist = ", ".join(faltantes) if faltantes else "Completo ✅"
 
             siguiente = (
-                "Proponer **POC** de 2 semanas con alcance, métricas (SLA/ROI) y responsables."
+                "Proponer **POC** de 2 semanas con alcance, métricas y responsables."
                 if (has_kpis(expectativas) or has_kpis(caso)) else
                 "Agendar **workshop** (90 min) para cerrar funcionalidades, KPIs y timeline."
             )
@@ -288,25 +284,23 @@ with tabs[1]:
 
 **Checklist:** {checklist}
 """
-            return md, checklist, siguiente
+            return md, checklist
 
-        # ---------- UI de 2 columnas: Chat | Plan ----------
+        # Layout de 2 columnas: Chat | Plan
         left, right = st.columns([0.56, 0.44])
 
-        # Mensajes iniciales
+        # Mensajes iniciales (sin score ni “seguimiento”)
         if not st.session_state.case_chat_msgs:
             st.session_state.case_chat_msgs.append(("assistant",
-                "Usaremos el **cuestionario oficial**. A medida que respondas, iré armando el **Plan de Negocio** a la derecha. "
-                f"Umbral del caso: **{THRESHOLD}**."))
+                "Usaremos el **cuestionario oficial**. A medida que respondas, iré armando el **Plan de Negocio** a la derecha."))
             st.session_state.case_chat_msgs.append(("assistant", question_for(st.session_state.case_current_key)))
 
-        # ---------- Lado izquierdo: Chat ----------
+        # ---------- Izquierda: Chat ----------
         with left:
             for role, content in st.session_state.case_chat_msgs:
                 with st.chat_message(role):
                     st.markdown(content)
 
-            # Entrada del usuario (sin chips de sugerencias)
             user_text = st.chat_input("Escribe tu respuesta…")
             if user_text:
                 cur = st.session_state.case_current_key
@@ -315,55 +309,25 @@ with tabs[1]:
                 prev = st.session_state.case_answers.get(cur,"")
                 st.session_state.case_answers[cur] = (prev + " " + user_text).strip()
 
-                # Recalcular score del caso
-                st.session_state.score = compute_score(st.session_state.case_answers)
-                st.session_state.ready_for_pdf = st.session_state.score >= THRESHOLD
-
-                # Seguimiento automático (preguntas de precisión)
-                tips = ""
-                ans = st.session_state.case_answers[cur]
-                follow_up = None
-                if cur == "presupuesto" and not has_money(ans):
-                    follow_up = "¿Puedes dar un **rango o monto** y la **moneda** (ej. MXN 1.2–1.6M)? ¿Quién lo aprueba?"
-                if cur == "lanzamiento" and not has_date(ans):
-                    follow_up = "¿Cuál es el **mes/fecha** o **trimestre** objetivo? ¿Hay un **hito** (piloto, go-live)?"
-                if cur == "funcionalidades" and count_list_items(ans) < 3:
-                    follow_up = "Enumera al menos **3–4 funcionalidades** separadas por coma para el MVP."
-                if cur == "criterios" and not mentions_any(ans, criteria_words):
-                    follow_up = "Indica **criterios de evaluación** (precio, calidad, tiempo, soporte/SLA, experiencia…)."
-                if cur == "target" and not mentions_roles_or_area(ans):
-                    follow_up = "¿Qué **roles/áreas** usarán la solución (Operaciones, Soporte, Ventas…)?"
-                if cur in ("objetivos","problema","solucion","expectativas","caso") and not has_kpis(ans):
-                    follow_up = "Añade **KPIs/impacto** (ROI esperado, ahorro %, SLA/MTTR, conversión, NPS/CSAT)."
-
-                # Avance inteligente
-                advance = partial_score(cur, ans) >= int(WEIGHTS[cur]*0.8) or len(ans.split()) > 25
-                nxt = next_unanswered_key() if advance else cur
+                # Avance simple al siguiente campo (sin mostrar score)
+                # Aún podemos evaluar internamente si quieres habilitar PDF más tarde.
+                nxt = next_unanswered_key()  # avanza siempre al siguiente pendiente
                 st.session_state.case_current_key = nxt
 
-                feedback = f"**Score actual del caso:** {st.session_state.score}/100."
-                if st.session_state.ready_for_pdf:
-                    feedback += " ✅ ¡Umbral superado! (Listo para PDF)."
-                else:
-                    faltan = [k for k,_ in QUESTIONS if not st.session_state.case_answers.get(k,'').strip()]
-                    if faltan: feedback += f" Pendientes: `{', '.join(faltan)}`."
-
                 if nxt:
-                    msg = f"Anotado. {feedback}"
-                    if follow_up: msg += f"\n\n🔎 **Seguimiento:** {follow_up}"
-                    msg += f"\n\n**Siguiente:** {question_for(nxt)}"
-                    st.session_state.case_chat_msgs.append(("assistant", msg))
+                    st.session_state.case_chat_msgs.append(("assistant", f"Anotado. **Siguiente:** {question_for(nxt)}"))
                 else:
-                    st.session_state.case_chat_msgs.append(("assistant", f"**¡Listo!** {feedback}"))
+                    st.session_state.case_chat_msgs.append(("assistant", "✅ **Plan completo.** Revisa la vista previa a la derecha."))
                 st.rerun()
 
-        # ---------- Lado derecho: Plan de Negocio en vivo ----------
+        # ---------- Derecha: Plan en vivo ----------
         with right:
-            md, checklist, siguiente = build_plan(st.session_state.case_answers)
+            md, checklist = build_plan(st.session_state.case_answers)
 
             total_campos = len(QUESTIONS)
-            completos = total_campos - checklist.count(",") if checklist != "Completo ✅" else total_campos
+            completos = total_campos if checklist == "Completo ✅" else total_campos - checklist.count(",")
             prog = int((completos/total_campos)*100)
+
             st.subheader("📋 Plan de Negocio (vivo)")
             st.progress(min(prog,100), text=f"Progreso: {prog}%")
 
@@ -377,13 +341,6 @@ with tabs[1]:
                 mime="text/markdown",
                 use_container_width=True
             )
-
-            st.info(f"**Siguiente paso sugerido:** {siguiente}")
-
-            if st.session_state.ready_for_pdf:
-                st.success("✅ **Listo para PDF** (umbral alcanzado).")
-            else:
-                st.warning("Completa los campos pendientes para habilitar PDF.")
 
 # ------------------------- TAB C: Competencia & PDF -------------------------
 with tabs[2]:
