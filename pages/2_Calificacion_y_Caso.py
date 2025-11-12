@@ -3,36 +3,11 @@ import streamlit as st
 import re
 from datetime import datetime
 
-# --------------------------------------------------
-# Config de página
-# --------------------------------------------------
+# ------------------------------ Config ------------------------------
 st.set_page_config(page_title="Calificación + Caso", page_icon="🧩", layout="wide")
 st.title("2) Calificación + Caso (chat) + Competencia")
 
-# --------------------------------------------------
-# Constantes del caso (chat)
-# --------------------------------------------------
-THRESHOLD = 70
-
-# Ponderaciones (suman 100)
-WEIGHTS = {
-    "objetivos": 10,
-    "problema": 10,
-    "solucion": 10,
-    "target": 8,
-    "funcionalidades": 10,
-    "expectativas": 7,
-    "experiencia": 5,
-    "adjudicacion": 5,
-    "criterios": 8,
-    "lanzamiento": 7,
-    "presupuesto": 10,
-    "caso": 6,
-    "nombre": 2,
-    "notas": 2,
-}
-
-# Orden y textos EXACTOS
+# ------------------------------ Cuestionario oficial ------------------------------
 QUESTIONS = [
     ("objetivos",      "¿Cuáles son los **objetivos de negocio**?"),
     ("problema",       "¿Cuál es el **problema a resolver**?"),
@@ -50,9 +25,7 @@ QUESTIONS = [
     ("notas",          "**Notas generales:**"),
 ]
 
-# --------------------------------------------------
-# Parsers / señales para el scoring del chat
-# --------------------------------------------------
+# ------------------------------ Parsers / señales ------------------------------
 money_rx = re.compile(r"(?:USD|US\$|MXN|\$|EUR|€)\s?([\d.,]+)|([\d.,]+)\s?(?:USD|US\$|MXN|EUR|€)", re.I)
 date_rx  = re.compile(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b")
 month_words = ("enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre","q1","q2","q3","q4","semana","mes")
@@ -60,70 +33,36 @@ roles_rx = re.compile(r"\b(CTO|CFO|CEO|COO|CIO|CMO|Compras|Procurement|IT|Operac
 award_words = ("licitación","invitación","adjudicación directa","concurso","RFP","RFQ","marco","convenio")
 criteria_words = ("precio","calidad","tiempo","soporte","SLA","experiencia","referencias","ROI","seguridad","cumplimiento","integración","capacidad","plazos")
 
-def has_money(t): return bool(money_rx.search(t or ""))
-def has_date(t): 
+def has_money(t: str) -> bool:
+    return bool(money_rx.search(t or ""))
+
+def has_date(t: str) -> bool:
     t = t or ""
     return bool(date_rx.search(t)) or any(w in t.lower() for w in month_words)
-def count_list_items(t): 
+
+def count_list_items(t: str) -> int:
     t = (t or "").strip()
-    return t.count(",") + t.count(";") + (1 if len(t)>0 else 0)
-def mentions_roles_or_area(t): 
+    return t.count(",") + t.count(";") + (1 if len(t) > 0 else 0)
+
+def mentions_roles_or_area(t: str) -> bool:
     t = t or ""
     return bool(roles_rx.search(t)) or any(w in t.lower() for w in ["usuarios","operadores","clientes","agentes","analistas","administradores"])
-def mentions_any(t, words): 
+
+def mentions_any(t: str, words) -> bool:
     t = (t or "").lower()
     return any(w in t for w in words)
-def has_kpis(t): 
+
+def has_kpis(t: str) -> bool:
     return bool(re.search(r"\bROI|NPS|CSAT|SLA|MTTR|conversi[oó]n|ingres|ahorro|cost|%|\bhoras\b|\bd[ií]as\b", t or "", re.I))
 
-def partial_score(key, text):
-    text = (text or "").strip()
-    if not text: return 0
-    w = WEIGHTS[key]
-    words = len(text.split())
-
-    if key in ("objetivos","problema","solucion","caso"):
-        base = 1.0 if words >= 12 else 0.6
-        bonus = 0.15 if has_kpis(text) else 0
-        return round(w * min(1.0, base + bonus))
-    if key == "target":
-        return round(w * (1.0 if mentions_roles_or_area(text) else 0.5))
-    if key == "funcionalidades":
-        items = count_list_items(text)
-        return round(w * (1.0 if items >= 4 else 0.7 if items >=2 else 0.4))
-    if key == "expectativas":
-        return round(w * (1.0 if has_kpis(text) else 0.6))
-    if key == "experiencia":
-        return round(w * (1.0 if any(x in text.lower() for x in ["sí","si","ya","anterior","previa","hemos"]) else 0.6))
-    if key == "adjudicacion":
-        return round(w * (1.0 if mentions_any(text, award_words) else 0.5))
-    if key == "criterios":
-        return round(w * (1.0 if mentions_any(text, criteria_words) and count_list_items(text)>=3 else 0.6))
-    if key == "lanzamiento":
-        return round(w * (1.0 if has_date(text) else 0.5))
-    if key == "presupuesto":
-        return round(w * (1.0 if has_money(text) else 0.5))
-    if key in ("nombre","notas"):
-        return round(w * (1.0 if len(text)>=3 else 0.3))
-    return 0
-
-def compute_score(answers):
-    total = 0
-    for k, _ in QUESTIONS:
-        total += partial_score(k, answers.get(k,""))
-    return int(total)
-
-# --------------------------------------------------
-# Tabs
-# --------------------------------------------------
+# ------------------------------ Tabs ------------------------------
 tabs = st.tabs(["A) Calificación", "B) Caso (chat inteligente)", "C) Competencia & PDF"])
 
-# ------------------------- TAB A: Calificación -------------------------
+# ============================== TAB A: Calificación ==============================
 with tabs[0]:
     st.subheader("Calificación del lead (20/30/30/5/5)")
     st.write("Debes alcanzar un **70%** para habilitar el chat del caso.")
 
-    # Radios sin selección inicial
     c1, c2 = st.columns(2)
     fecha = c1.radio("¿Tiene fecha planeada para iniciar proyecto?", ["Sí", "No"], index=None, key="cal_fecha")
     marketing = c2.radio("¿Es un proyecto para incrementar ventas o marketing?", ["Sí", "No"], index=None, key="cal_mkt")
@@ -132,34 +71,38 @@ with tabs[0]:
     decision = c1.radio("¿Hablamos con tomador de decisión?", ["Sí", "No"], index=None, key="cal_dec")
 
     if st.button("Calcular calificación", use_container_width=True):
-        score = 0
-        if fecha == "Sí": score += 20
-        if marketing == "Sí": score += 30
-        if presupuesto == "Sí": score += 30
-        if prioridad == "Sí": score += 5
-        if decision == "Sí": score += 5
-
-        st.session_state.lead_score = score
-
-        if score >= 70:
-            st.success(f"Calificación: **{score}/100** ✅ — Puedes pasar a la pestaña **B) Caso (chat)**.")
+        if None in (
+            st.session_state.get("cal_fecha"),
+            st.session_state.get("cal_mkt"),
+            st.session_state.get("cal_pres"),
+            st.session_state.get("cal_prio"),
+            st.session_state.get("cal_dec"),
+        ):
+            st.warning("⚠️ Responde las 5 preguntas antes de calcular.")
         else:
-            st.warning(f"Calificación: **{score}/100** ⚠️ — Aún no alcanza el umbral de 70.")
+            score = 0
+            if fecha == "Sí": score += 20
+            if marketing == "Sí": score += 30
+            if presupuesto == "Sí": score += 30
+            if prioridad == "Sí": score += 5
+            if decision == "Sí": score += 5
+            st.session_state.lead_score = score
+            if score >= 70:
+                st.success(f"Calificación: **90/100**" if score==90 else f"Calificación: **{score}/100**")
+                st.info("Puedes pasar a la pestaña **B) Caso (chat)**.")
+            else:
+                st.warning(f"Calificación: **{score}/100** — Aún no alcanza el umbral de 70.")
 
     st.caption("Responde las 5 preguntas para calcular la calificación.")
 
-# ------------------------- TAB B: Chat del Caso -------------------------
-# ------------------------- TAB B: Chat del Caso (Plan Builder) -------------------------
-# ------------------------- TAB B: Chat del Caso (sin chips, con IA local) -------------------------
-# ------------------------- TAB B: Chat del Caso (enfoque 100% Plan) -------------------------
+# ============================== TAB B: Chat del Caso ==============================
 with tabs[1]:
-    # Requiere calificación previa
     if st.session_state.get("lead_score", 0) < 70:
         st.warning("⚠️ Primero completa la **calificación** y alcanza al menos **70** para continuar.")
     else:
         st.success("✅ Lead calificado. Inicia el **chat**: iré construyendo el **Plan de Negocio** en la derecha.")
 
-        # ---------- Estado del chat ----------
+        # ---- Estado del chat ----
         if "case_chat_msgs" not in st.session_state:
             st.session_state.case_chat_msgs = []
         if "case_answers" not in st.session_state:
@@ -167,18 +110,18 @@ with tabs[1]:
         if "case_current_key" not in st.session_state:
             st.session_state.case_current_key = QUESTIONS[0][0]
         if "ready_for_pdf" not in st.session_state:
-            st.session_state.ready_for_pdf = False  # seguimos calculándolo internamente
+            st.session_state.ready_for_pdf = False
 
-        # Utilidades
         def next_unanswered_key():
             for k, _ in QUESTIONS:
-                if not st.session_state.case_answers.get(k,"").strip():
+                if not st.session_state.case_answers.get(k, "").strip():
                     return k
             return None
 
         def question_for(key):
             for k, q in QUESTIONS:
-                if k == key: return q
+                if k == key:
+                    return q
             return "¿Algo más?"
 
         # IA local: pulido ligero + rellenos prudentes
@@ -196,32 +139,38 @@ with tabs[1]:
                 if label == "caso":
                     return "Se espera ROI positivo mediante ahorro operativo y mejora de KPIs de servicio."
                 return "Pendiente por confirmar."
-            t = t.replace("\n"," ").strip()
-            if label in ("objetivos","problema","solucion","expectativas","caso") and not has_kpis(t):
+            t = t.replace("\n", " ").strip()
+            if label in ("objetivos", "problema", "solucion", "expectativas", "caso") and not has_kpis(t):
                 t += " (Incluir KPIs: ROI esperado, ahorro %, mejora de SLA/MTTR, conversión o NPS/CSAT)."
-            if label == "funcionalidades" and (t.count(",")+t.count(";")) < 2:
+            if label == "funcionalidades" and (t.count(",") + t.count(";")) < 2:
                 t += " (Detalle al menos 3–4 funcionalidades del MVP)."
             return t
 
+        # Build del plan (sin depender de funciones externas)
         def build_plan(a: dict):
-            objetivos = ai_refine("objetivos", a["objetivos"])
-            problema  = ai_refine("problema", a["problema"])
-            solucion  = ai_refine("solucion", a["solucion"])
-            target    = ai_refine("target", a["target"])
-            funcs     = ai_refine("funcionalidades", a["funcionalidades"])
-            expectativas = ai_refine("expectativas", a["expectativas"])
-            experiencia  = ai_refine("experiencia", a["experiencia"])
-            adjudic      = ai_refine("adjudicacion", a["adjudicacion"])
-            criterios    = ai_refine("criterios", a["criterios"])
-            lanzamiento  = ai_refine("lanzamiento", a["lanzamiento"])
-            presupuesto  = ai_refine("presupuesto", a["presupuesto"])
-            caso         = ai_refine("caso", a["caso"])
-            nombre       = a["nombre"].strip() or "(pendiente)"
-            notas        = a["notas"].strip() or ""
+            objetivos = ai_refine("objetivos", a.get("objetivos", ""))
+            problema  = ai_refine("problema", a.get("problema", ""))
+            solucion  = ai_refine("solucion", a.get("solucion", ""))
+            target    = ai_refine("target", a.get("target", ""))
+            funcs     = ai_refine("funcionalidades", a.get("funcionalidades", ""))
+            expectativas = ai_refine("expectativas", a.get("expectativas", ""))
+            experiencia  = ai_refine("experiencia", a.get("experiencia", ""))
+            adjudic      = ai_refine("adjudicacion", a.get("adjudicacion", ""))
+            criterios    = ai_refine("criterios", a.get("criterios", ""))
+            lanzamiento  = ai_refine("lanzamiento", a.get("lanzamiento", ""))
+            presupuesto  = ai_refine("presupuesto", a.get("presupuesto", ""))
+            caso         = ai_refine("caso", a.get("caso", ""))
+            nombre       = (a.get("nombre", "") or "").strip() or "(pendiente)"
+            notas        = (a.get("notas", "") or "").strip()
 
-            faltantes = [k for k,_ in QUESTIONS if not a.get(k,"").strip()]
+            faltantes = [k for k, _ in QUESTIONS if not (a.get(k, "") or "").strip()]
             checklist = ", ".join(faltantes) if faltantes else "Completo ✅"
 
+            # Detección local de riesgos/objeciones en 'notas'
+            risk_rx = re.compile(r"\b(riesgo|objeci[oó]n|costo|seguridad|legal|compliance|privacidad|cambio|adopci[oó]n|integraci[oó]n|soporte)\b", re.I)
+            notas_tienen_riesgos = bool(risk_rx.search(notas or ""))
+
+            # Siguiente paso sugerido (ligero)
             siguiente = (
                 "Proponer **POC** de 2 semanas con alcance, métricas y responsables."
                 if (has_kpis(expectativas) or has_kpis(caso)) else
@@ -268,7 +217,7 @@ with tabs[1]:
 ---
 
 ## 5. Riesgos y mitigación
-**Riesgos/objeciones:** {notas if has_risks(notas) else "Identificar riesgos técnicos/legales/operativos y plan de mitigación."}
+**Riesgos/objeciones:** {notas if notas_tienen_riesgos else "Identificar riesgos técnicos/legales/operativos y plan de mitigación."}
 
 ---
 
@@ -286,16 +235,15 @@ with tabs[1]:
 """
             return md, checklist
 
-        # Layout de 2 columnas: Chat | Plan
+        # ---- Layout: Chat | Plan ----
         left, right = st.columns([0.56, 0.44])
 
-        # Mensajes iniciales (sin score ni “seguimiento”)
         if not st.session_state.case_chat_msgs:
             st.session_state.case_chat_msgs.append(("assistant",
                 "Usaremos el **cuestionario oficial**. A medida que respondas, iré armando el **Plan de Negocio** a la derecha."))
             st.session_state.case_chat_msgs.append(("assistant", question_for(st.session_state.case_current_key)))
 
-        # ---------- Izquierda: Chat ----------
+        # Izquierda: chat
         with left:
             for role, content in st.session_state.case_chat_msgs:
                 with st.chat_message(role):
@@ -305,13 +253,11 @@ with tabs[1]:
             if user_text:
                 cur = st.session_state.case_current_key
                 st.session_state.case_chat_msgs.append(("user", user_text))
-
-                prev = st.session_state.case_answers.get(cur,"")
+                prev = st.session_state.case_answers.get(cur, "")
                 st.session_state.case_answers[cur] = (prev + " " + user_text).strip()
 
-                # Avance simple al siguiente campo (sin mostrar score)
-                # Aún podemos evaluar internamente si quieres habilitar PDF más tarde.
-                nxt = next_unanswered_key()  # avanza siempre al siguiente pendiente
+                # avanzar al siguiente pendiente
+                nxt = next_unanswered_key()
                 st.session_state.case_current_key = nxt
 
                 if nxt:
@@ -320,16 +266,17 @@ with tabs[1]:
                     st.session_state.case_chat_msgs.append(("assistant", "✅ **Plan completo.** Revisa la vista previa a la derecha."))
                 st.rerun()
 
-        # ---------- Derecha: Plan en vivo ----------
+        # Derecha: plan en vivo + descarga
         with right:
             md, checklist = build_plan(st.session_state.case_answers)
 
+            # Progreso (por campos completos)
             total_campos = len(QUESTIONS)
             completos = total_campos if checklist == "Completo ✅" else total_campos - checklist.count(",")
-            prog = int((completos/total_campos)*100)
+            prog = int((completos / total_campos) * 100)
 
             st.subheader("📋 Plan de Negocio (vivo)")
-            st.progress(min(prog,100), text=f"Progreso: {prog}%")
+            st.progress(min(prog, 100), text=f"Progreso: {prog}%")
 
             with st.expander("📄 Vista previa (Markdown)", expanded=True):
                 st.markdown(md)
@@ -342,24 +289,26 @@ with tabs[1]:
                 use_container_width=True
             )
 
-# ------------------------- TAB C: Competencia & PDF -------------------------
+            # Habilitar PDF cuando esté completo
+            st.session_state.ready_for_pdf = (checklist == "Completo ✅")
+
+# ============================== TAB C: Competencia & PDF ==============================
 with tabs[2]:
     st.subheader("Competencia & PDF")
     if not st.session_state.get("ready_for_pdf"):
-        st.info("Completa el **Caso (chat)** y alcanza el umbral para habilitar la exportación a PDF.")
+        st.info("Completa el **Caso (chat)** al 100% para habilitar la exportación a PDF.")
     else:
-        st.success("✅ Caso completo. **Listo para PDF**.")
-        st.write("Aquí puedes agregar tu comparación competitiva y (si deseas) un botón para **generar PDF** con el resumen anterior.")
-
-# ------------------------- Sidebar: estado y reset -------------------------
+        st.success("✅ Plan de Negocio completo. **Listo para PDF**.")
+        st.write("Aquí puedes agregar tu comparación competitiva y un botón para **generar PDF** con el plan.")
+        # (Opcional) Generar PDF usando el Markdown del Tab B con reportlab/fpdf.
+        # Podemos integrarlo si lo necesitas ahora.
+        
+# ------------------------------ Sidebar ------------------------------
 with st.sidebar:
     st.subheader("Estado")
     st.metric("Calificación (lead)", st.session_state.get("lead_score", 0))
-    st.metric("Score del Caso", st.session_state.get("score", 0))
     st.metric("Listo para PDF", "Sí" if st.session_state.get("ready_for_pdf", False) else "No")
-
     if st.button("Reiniciar sesión", use_container_width=True):
-        for k in ("lead_score", "case_chat_msgs", "case_answers", "case_current_key", "score", "ready_for_pdf"):
-            if k in st.session_state:
-                del st.session_state[k]
+        for k in ("lead_score","case_chat_msgs","case_answers","case_current_key","ready_for_pdf"):
+            if k in st.session_state: del st.session_state[k]
         st.experimental_rerun()
