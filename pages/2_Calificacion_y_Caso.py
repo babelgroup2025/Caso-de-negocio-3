@@ -294,6 +294,7 @@ with tabs[1]:
 
 # ============================== TAB C: Competencia & PDF ==============================
 # ============================== TAB C: Competencia & PDF ==============================
+# ============================== TAB C: Competencia & PDF ==============================
 with tabs[2]:
     st.subheader("Competencia & PDF")
 
@@ -302,16 +303,18 @@ with tabs[2]:
     else:
         st.success("✅ Plan de Negocio completo. **Listo para exportar en PDF**.")
 
+        # Asegura que tenemos el markdown del plan
+        plan_md = st.session_state.get("plan_md")
+        if not plan_md:
+            plan_md, _ = build_plan(st.session_state.case_answers)
+
+        # -- Generar PDF con reportlab --
         from io import BytesIO
         from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Image
         from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.utils import ImageReader
 
-        # Obtener el contenido del plan desde el Tab B
-        plan_md, _ = build_plan(st.session_state.case_answers)
-
-        # Crear PDF en memoria
         pdf_buffer = BytesIO()
         doc = SimpleDocTemplate(pdf_buffer, pagesize=letter,
                                 leftMargin=50, rightMargin=50, topMargin=80, bottomMargin=50)
@@ -319,34 +322,36 @@ with tabs[2]:
         styles = getSampleStyleSheet()
         story = []
 
-        # Logo de Babel
+        # Logo (opcional)
         try:
             story.append(Image("logo_babel.jpeg", width=120, height=60))
-            story.append(Spacer(1, 20))
+            story.append(Spacer(1, 18))
         except Exception:
-            st.warning("⚠️ No se pudo cargar el logo (verifica el nombre y la ubicación del archivo).")
+            st.caption("No se encontró 'logo_babel.jpeg' (opcional).")
 
         # Título
         story.append(Paragraph("<b>Plan de Negocio – Babel</b>", styles["Title"]))
         story.append(Spacer(1, 12))
 
-        # Convertir Markdown a párrafos simples (sin formato)
+        # Texto del plan (markdown simplificado a párrafos)
         for line in plan_md.split("\n"):
-            if line.strip():
-                story.append(Paragraph(line.strip(), styles["Normal"]))
+            line = line.strip()
+            if not line:
                 story.append(Spacer(1, 6))
+                continue
+            # Remueve hashes de encabezados para que no salgan feos en PDF
+            clean = line.lstrip("# ").strip()
+            story.append(Paragraph(clean, styles["Normal"]))
+            story.append(Spacer(1, 6))
 
-        # Construir el PDF
+        # Construye el PDF
         doc.build(story)
         pdf_data = pdf_buffer.getvalue()
 
-        # Botón de descarga
         st.download_button(
-            "⬇️ Descargar Plan de Negocio en PDF",
+            "⬇️ Descargar Plan de Negocio (PDF)",
             data=pdf_data,
             file_name="Plan_de_Negocio_Babel.pdf",
             mime="application/pdf",
             use_container_width=True
         )
-
-        st.caption("Se incluirá el logo de Babel y todo el contenido del plan generado.")
