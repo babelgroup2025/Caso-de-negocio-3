@@ -8,3 +8,4 @@ tiktoken
 faiss-cpu
 pypdf
 python-pptx
+reportlab
