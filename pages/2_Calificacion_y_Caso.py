@@ -1,4 +1,3 @@
-# pages/2_Calificación_y_Caso.py
 import streamlit as st
 import re
 from datetime import datetime
@@ -55,129 +54,58 @@ def mentions_any(t: str, words) -> bool:
 def has_kpis(t: str) -> bool:
     return bool(re.search(r"\bROI|NPS|CSAT|SLA|MTTR|conversi[oó]n|ingres|ahorro|cost|%|\bhoras\b|\bd[ií]as\b", t or "", re.I))
 
-# ------------------------------ Tabs ------------------------------
-tabs = st.tabs(["A) Calificación", "B) Caso (chat inteligente)", "C) Competencia & PDF"])
+# ------------------------------ build_plan GLOBAL ------------------------------
+def ai_refine(label, text):
+    t = (text or "").strip()
+    if not t:
+        if label == "funcionalidades":
+            return "MVP con dashboard, gestión de usuarios/roles, alertas y exportación de reportes."
+        if label == "criterios":
+            return "Precio total, calidad de entrega, tiempo de implementación, soporte/SLA y experiencia comprobable."
+        if label == "lanzamiento":
+            return "Definir hito (mes/fecha o trimestre) y plan de piloto previo."
+        if label == "presupuesto":
+            return "Rango estimado a definir con Finanzas y Compras."
+        if label == "caso":
+            return "Se espera ROI positivo mediante ahorro operativo y mejora de KPIs de servicio."
+        return "Pendiente por confirmar."
+    t = t.replace("\n", " ").strip()
+    if label in ("objetivos", "problema", "solucion", "expectativas", "caso") and not has_kpis(t):
+        t += " (Incluir KPIs: ROI esperado, ahorro %, mejora de SLA/MTTR, conversión o NPS/CSAT)."
+    if label == "funcionalidades" and (t.count(",") + t.count(";")) < 2:
+        t += " (Detalle al menos 3–4 funcionalidades del MVP)."
+    return t
 
-# ============================== TAB A: Calificación ==============================
-with tabs[0]:
-    st.subheader("Calificación del lead (20/30/30/5/5)")
-    st.write("Debes alcanzar un **70%** para habilitar el chat del caso.")
+def build_plan(a: dict):
+    objetivos = ai_refine("objetivos", a.get("objetivos", ""))
+    problema  = ai_refine("problema", a.get("problema", ""))
+    solucion  = ai_refine("solucion", a.get("solucion", ""))
+    target    = ai_refine("target", a.get("target", ""))
+    funcs     = ai_refine("funcionalidades", a.get("funcionalidades", ""))
+    expectativas = ai_refine("expectativas", a.get("expectativas", ""))
+    experiencia  = ai_refine("experiencia", a.get("experiencia", ""))
+    adjudic      = ai_refine("adjudicacion", a.get("adjudicacion", ""))
+    criterios    = ai_refine("criterios", a.get("criterios", ""))
+    lanzamiento  = ai_refine("lanzamiento", a.get("lanzamiento", ""))
+    presupuesto  = ai_refine("presupuesto", a.get("presupuesto", ""))
+    caso         = ai_refine("caso", a.get("caso", ""))
+    nombre       = (a.get("nombre", "") or "").strip() or "(pendiente)"
+    notas        = (a.get("notas", "") or "").strip()
 
-    c1, c2 = st.columns(2)
-    fecha = c1.radio("¿Tiene fecha planeada para iniciar proyecto?", ["Sí", "No"], index=None, key="cal_fecha")
-    marketing = c2.radio("¿Es un proyecto para incrementar ventas o marketing?", ["Sí", "No"], index=None, key="cal_mkt")
-    presupuesto = c1.radio("¿Cuenta con presupuesto?", ["Sí", "No"], index=None, key="cal_pres")
-    prioridad = c2.radio("¿El proyecto resuelve un problema de prioridad 1, 2 o 3?", ["Sí", "No"], index=None, key="cal_prio")
-    decision = c1.radio("¿Hablamos con tomador de decisión?", ["Sí", "No"], index=None, key="cal_dec")
+    faltantes = [k for k, _ in QUESTIONS if not (a.get(k, "") or "").strip()]
+    checklist = ", ".join(faltantes) if faltantes else "Completo ✅"
 
-    if st.button("Calcular calificación", use_container_width=True):
-        if None in (
-            st.session_state.get("cal_fecha"),
-            st.session_state.get("cal_mkt"),
-            st.session_state.get("cal_pres"),
-            st.session_state.get("cal_prio"),
-            st.session_state.get("cal_dec"),
-        ):
-            st.warning("⚠️ Responde las 5 preguntas antes de calcular.")
-        else:
-            score = 0
-            if fecha == "Sí": score += 20
-            if marketing == "Sí": score += 30
-            if presupuesto == "Sí": score += 30
-            if prioridad == "Sí": score += 5
-            if decision == "Sí": score += 5
-            st.session_state.lead_score = score
-            if score >= 70:
-                st.success(f"Calificación: **90/100**" if score==90 else f"Calificación: **{score}/100**")
-                st.info("Puedes pasar a la pestaña **B) Caso (chat)**.")
-            else:
-                st.warning(f"Calificación: **{score}/100** — Aún no alcanza el umbral de 70.")
+    # Detección local de riesgos/objeciones en 'notas'
+    risk_rx = re.compile(r"\b(riesgo|objeci[oó]n|costo|seguridad|legal|compliance|privacidad|cambio|adopci[oó]n|integraci[oó]n|soporte)\b", re.I)
+    notas_tienen_riesgos = bool(risk_rx.search(notas or ""))
 
-    st.caption("Responde las 5 preguntas para calcular la calificación.")
+    siguiente = (
+        "Proponer **POC** de 2 semanas con alcance, métricas y responsables."
+        if (has_kpis(expectativas) or has_kpis(caso)) else
+        "Agendar **workshop** (90 min) para cerrar funcionalidades, KPIs y timeline."
+    )
 
-# ============================== TAB B: Chat del Caso ==============================
-with tabs[1]:
-    if st.session_state.get("lead_score", 0) < 70:
-        st.warning("⚠️ Primero completa la **calificación** y alcanza al menos **70** para continuar.")
-    else:
-        st.success("✅ Lead calificado. Inicia el **chat**: iré construyendo el **Plan de Negocio** en la derecha.")
-
-        # ---- Estado del chat ----
-        if "case_chat_msgs" not in st.session_state:
-            st.session_state.case_chat_msgs = []
-        if "case_answers" not in st.session_state:
-            st.session_state.case_answers = {k: "" for k, _ in QUESTIONS}
-        if "case_current_key" not in st.session_state:
-            st.session_state.case_current_key = QUESTIONS[0][0]
-        if "ready_for_pdf" not in st.session_state:
-            st.session_state.ready_for_pdf = False
-
-        def next_unanswered_key():
-            for k, _ in QUESTIONS:
-                if not st.session_state.case_answers.get(k, "").strip():
-                    return k
-            return None
-
-        def question_for(key):
-            for k, q in QUESTIONS:
-                if k == key:
-                    return q
-            return "¿Algo más?"
-
-        # IA local: pulido ligero + rellenos prudentes
-        def ai_refine(label, text):
-            t = (text or "").strip()
-            if not t:
-                if label == "funcionalidades":
-                    return "MVP con dashboard, gestión de usuarios/roles, alertas y exportación de reportes."
-                if label == "criterios":
-                    return "Precio total, calidad de entrega, tiempo de implementación, soporte/SLA y experiencia comprobable."
-                if label == "lanzamiento":
-                    return "Definir hito (mes/fecha o trimestre) y plan de piloto previo."
-                if label == "presupuesto":
-                    return "Rango estimado a definir con Finanzas y Compras."
-                if label == "caso":
-                    return "Se espera ROI positivo mediante ahorro operativo y mejora de KPIs de servicio."
-                return "Pendiente por confirmar."
-            t = t.replace("\n", " ").strip()
-            if label in ("objetivos", "problema", "solucion", "expectativas", "caso") and not has_kpis(t):
-                t += " (Incluir KPIs: ROI esperado, ahorro %, mejora de SLA/MTTR, conversión o NPS/CSAT)."
-            if label == "funcionalidades" and (t.count(",") + t.count(";")) < 2:
-                t += " (Detalle al menos 3–4 funcionalidades del MVP)."
-            return t
-
-        # Build del plan (sin depender de funciones externas)
-        def build_plan(a: dict):
-            objetivos = ai_refine("objetivos", a.get("objetivos", ""))
-            problema  = ai_refine("problema", a.get("problema", ""))
-            solucion  = ai_refine("solucion", a.get("solucion", ""))
-            target    = ai_refine("target", a.get("target", ""))
-            funcs     = ai_refine("funcionalidades", a.get("funcionalidades", ""))
-            expectativas = ai_refine("expectativas", a.get("expectativas", ""))
-            experiencia  = ai_refine("experiencia", a.get("experiencia", ""))
-            adjudic      = ai_refine("adjudicacion", a.get("adjudicacion", ""))
-            criterios    = ai_refine("criterios", a.get("criterios", ""))
-            lanzamiento  = ai_refine("lanzamiento", a.get("lanzamiento", ""))
-            presupuesto  = ai_refine("presupuesto", a.get("presupuesto", ""))
-            caso         = ai_refine("caso", a.get("caso", ""))
-            nombre       = (a.get("nombre", "") or "").strip() or "(pendiente)"
-            notas        = (a.get("notas", "") or "").strip()
-
-            faltantes = [k for k, _ in QUESTIONS if not (a.get(k, "") or "").strip()]
-            checklist = ", ".join(faltantes) if faltantes else "Completo ✅"
-
-            # Detección local de riesgos/objeciones en 'notas'
-            risk_rx = re.compile(r"\b(riesgo|objeci[oó]n|costo|seguridad|legal|compliance|privacidad|cambio|adopci[oó]n|integraci[oó]n|soporte)\b", re.I)
-            notas_tienen_riesgos = bool(risk_rx.search(notas or ""))
-
-            # Siguiente paso sugerido (ligero)
-            siguiente = (
-                "Proponer **POC** de 2 semanas con alcance, métricas y responsables."
-                if (has_kpis(expectativas) or has_kpis(caso)) else
-                "Agendar **workshop** (90 min) para cerrar funcionalidades, KPIs y timeline."
-            )
-
-            md = f"""
+    md = f"""
 # {nombre}
 
 ## 1. Resumen ejecutivo
@@ -233,11 +161,78 @@ with tabs[1]:
 
 **Checklist:** {checklist}
 """
-            return md, checklist
+    return md, checklist
 
-        # ---- Layout: Chat | Plan ----
+# ------------------------------ Tabs ------------------------------
+tabs = st.tabs(["A) Calificación", "B) Caso (chat inteligente)", "C) Competencia & PDF"])
+
+# ============================== TAB A: Calificación ==============================
+with tabs[0]:
+    st.subheader("Calificación del lead (20/30/30/5/5)")
+    st.write("Debes alcanzar un **70%** para habilitar el chat del caso.")
+
+    c1, c2 = st.columns(2)
+    fecha = c1.radio("¿Tiene fecha planeada para iniciar proyecto?", ["Sí", "No"], index=None, key="cal_fecha")
+    marketing = c2.radio("¿Es un proyecto para incrementar ventas o marketing?", ["Sí", "No"], index=None, key="cal_mkt")
+    presupuesto = c1.radio("¿Cuenta con presupuesto?", ["Sí", "No"], index=None, key="cal_pres")
+    prioridad = c2.radio("¿El proyecto resuelve un problema de prioridad 1, 2 o 3?", ["Sí", "No"], index=None, key="cal_prio")
+    decision = c1.radio("¿Hablamos con tomador de decisión?", ["Sí", "No"], index=None, key="cal_dec")
+
+    if st.button("Calcular calificación", use_container_width=True):
+        if None in (
+            st.session_state.get("cal_fecha"),
+            st.session_state.get("cal_mkt"),
+            st.session_state.get("cal_pres"),
+            st.session_state.get("cal_prio"),
+            st.session_state.get("cal_dec"),
+        ):
+            st.warning("⚠️ Responde las 5 preguntas antes de calcular.")
+        else:
+            score = 0
+            if fecha == "Sí": score += 20
+            if marketing == "Sí": score += 30
+            if presupuesto == "Sí": score += 30
+            if prioridad == "Sí": score += 5
+            if decision == "Sí": score += 5
+            st.session_state.lead_score = score
+            if score >= 70:
+                st.success(f"Calificación: **{score}/100** — Puedes pasar a la pestaña **B) Caso (chat)**.")
+            else:
+                st.warning(f"Calificación: **{score}/100** — Aún no alcanza el umbral de 70.")
+
+    st.caption("Responde las 5 preguntas para calcular la calificación.")
+
+# ============================== TAB B: Chat del Caso (construcción del plan) ==============================
+with tabs[1]:
+    if st.session_state.get("lead_score", 0) < 70:
+        st.warning("⚠️ Primero completa la **calificación** y alcanza al menos **70** para continuar.")
+    else:
+        st.success("✅ Lead calificado. Inicia el **chat**: iré construyendo el **Plan de Negocio** a la derecha.")
+
+        # ---- Estado del chat ----
+        if "case_chat_msgs" not in st.session_state:
+            st.session_state.case_chat_msgs = []
+        if "case_answers" not in st.session_state:
+            st.session_state.case_answers = {k: "" for k, _ in QUESTIONS}
+        if "case_current_key" not in st.session_state:
+            st.session_state.case_current_key = QUESTIONS[0][0]
+
+        def next_unanswered_key():
+            for k, _ in QUESTIONS:
+                if not st.session_state.case_answers.get(k, "").strip():
+                    return k
+            return None
+
+        def question_for(key):
+            for k, q in QUESTIONS:
+                if k == key:
+                    return q
+            return "¿Algo más?"
+
+        # Layout: Chat | Plan
         left, right = st.columns([0.56, 0.44])
 
+        # Mensajes iniciales
         if not st.session_state.case_chat_msgs:
             st.session_state.case_chat_msgs.append(("assistant",
                 "Usaremos el **cuestionario oficial**. A medida que respondas, iré armando el **Plan de Negocio** a la derecha."))
@@ -256,7 +251,7 @@ with tabs[1]:
                 prev = st.session_state.case_answers.get(cur, "")
                 st.session_state.case_answers[cur] = (prev + " " + user_text).strip()
 
-                # avanzar al siguiente pendiente
+                # Avanza al siguiente pendiente
                 nxt = next_unanswered_key()
                 st.session_state.case_current_key = nxt
 
@@ -266,11 +261,14 @@ with tabs[1]:
                     st.session_state.case_chat_msgs.append(("assistant", "✅ **Plan completo.** Revisa la vista previa a la derecha."))
                 st.rerun()
 
-        # Derecha: plan en vivo + descarga
+        # Derecha: plan en vivo (SIN botón .md)
         with right:
             md, checklist = build_plan(st.session_state.case_answers)
 
-            # Progreso (por campos completos)
+            # Guardar para el Tab C
+            st.session_state.plan_md = md
+            st.session_state.ready_for_pdf = (checklist == "Completo ✅")
+
             total_campos = len(QUESTIONS)
             completos = total_campos if checklist == "Completo ✅" else total_campos - checklist.count(",")
             prog = int((completos / total_campos) * 100)
@@ -281,20 +279,6 @@ with tabs[1]:
             with st.expander("📄 Vista previa (Markdown)", expanded=True):
                 st.markdown(md)
 
-            st.download_button(
-                "⬇️ Descargar Plan (.md)",
-                data=md.encode("utf-8"),
-                file_name=f"Plan_de_Negocio_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-
-            # Habilitar PDF cuando esté completo
-            st.session_state.ready_for_pdf = (checklist == "Completo ✅")
-
-# ============================== TAB C: Competencia & PDF ==============================
-# ============================== TAB C: Competencia & PDF ==============================
-# ============================== TAB C: Competencia & PDF ==============================
 # ============================== TAB C: Competencia & PDF ==============================
 with tabs[2]:
     st.subheader("Competencia & PDF")
@@ -304,12 +288,12 @@ with tabs[2]:
     else:
         st.success("✅ Plan de Negocio completo. **Listo para exportar en PDF**.")
 
-        # Traer el markdown generado en el Tab B; si no está, volver a construirlo
+        # Traer el markdown generado en el Tab B; si no está, reconstruir
         plan_md = st.session_state.get("plan_md")
         if not plan_md:
             plan_md, _ = build_plan(st.session_state.case_answers)
 
-        # ---- Generar PDF usando reportlab ----
+        # ---- Generar PDF con reportlab (importar dentro para evitar errores si no está instalado) ----
         from io import BytesIO
         from reportlab.lib.pagesizes import letter
         from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Image
@@ -346,15 +330,24 @@ with tabs[2]:
             story.append(Paragraph(t, styles["Normal"]))
             story.append(Spacer(1, 6))
 
-        # Crear PDF en memoria
+        # Construir PDF
         doc.build(story)
         pdf_data = pdf_buffer.getvalue()
 
-        # ✅ Botón SOLO PDF
         st.download_button(
             "⬇️ Descargar Plan de Negocio (PDF)",
             data=pdf_data,
             file_name="Plan_de_Negocio_Babel.pdf",
-            mime="application/pdf",            # si tu navegador sigue abriéndolo raro, usa "application/octet-stream"
+            mime="application/pdf",  # si tu navegador previsualiza, cambia a "application/octet-stream"
             use_container_width=True
         )
+
+# ------------------------------ Sidebar ------------------------------
+with st.sidebar:
+    st.subheader("Estado")
+    st.metric("Calificación (lead)", st.session_state.get("lead_score", 0))
+    st.metric("Listo para PDF", "Sí" if st.session_state.get("ready_for_pdf", False) else "No")
+    if st.button("Reiniciar sesión", use_container_width=True):
+        for k in ("lead_score","case_chat_msgs","case_answers","case_current_key","ready_for_pdf","plan_md"):
+            if k in st.session_state: del st.session_state[k]
+        st.experimental_rerun()
