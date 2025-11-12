@@ -150,8 +150,8 @@ with tabs[0]:
 
 # ------------------------- TAB B: Chat del Caso -------------------------
 # ------------------------- TAB B: Chat del Caso (Plan Builder) -------------------------
+# ------------------------- TAB B: Chat del Caso (sin chips, con IA local) -------------------------
 with tabs[1]:
-    # Bloqueo si no alcanza la calificación mínima
     if st.session_state.get("lead_score", 0) < 70:
         st.warning("⚠️ Primero completa la **calificación** y alcanza al menos **70** para continuar.")
     else:
@@ -169,7 +169,7 @@ with tabs[1]:
         if "ready_for_pdf" not in st.session_state:
             st.session_state.ready_for_pdf = False
 
-        # -------- utilidades (usamos las mismas de arriba) --------
+        # -------- utilidades (usamos las de arriba + estas) --------
         def next_unanswered_key():
             for k, _ in QUESTIONS:
                 if not st.session_state.case_answers.get(k,"").strip():
@@ -181,43 +181,57 @@ with tabs[1]:
                 if k == key: return q
             return "¿Algo más?"
 
-        # ---------- Builder del Plan ----------
-        def build_plan(a: dict):
-            # Extraer partes útiles
-            objetivos = a["objetivos"] or "—"
-            problema  = a["problema"] or "—"
-            solucion  = a["solucion"] or "—"
-            target    = a["target"] or "—"
-            funcs     = a["funcionalidades"] or "—"
-            expectativas = a["expectativas"] or "—"
-            experiencia  = a["experiencia"] or "—"
-            adjudic      = a["adjudicacion"] or "—"
-            criterios    = a["criterios"] or "—"
-            lanzamiento  = a["lanzamiento"] or "—"
-            presupuesto  = a["presupuesto"] or "—"
-            caso         = a["caso"] or "—"
-            nombre       = a["nombre"] or "(pendiente)"
-            notas        = a["notas"] or "—"
+        # IA local: reescribe y completa suavemente con inferencias prudentes
+        def ai_refine(label, text):
+            t = (text or "").strip()
+            if not t:
+                # sugerencia segura por defecto
+                if label == "funcionalidades":
+                    return "MVP con dashboard, gestión de usuarios/roles, alertas y exportación de reportes."
+                if label == "criterios":
+                    return "Precio total, calidad de entrega, tiempo de implementación, soporte/SLA y experiencia comprobable."
+                if label == "lanzamiento":
+                    return "Definir hito (mes/fecha o trimestre) y plan de piloto previo."
+                if label == "presupuesto":
+                    return "Rango estimado a definir con Finanzas y Compras."
+                if label == "caso":
+                    return "Se espera ROI positivo mediante ahorro operativo y mejora de KPIs de servicio."
+                return "Pendiente por confirmar."
+            # pulido breve
+            t = t.replace("\n"," ").strip()
+            # añade KPIs si faltan en secciones clave
+            if label in ("objetivos","problema","solucion","expectativas","caso") and not has_kpis(t):
+                t += " (Incluir KPIs: ROI esperado, ahorro %, mejora de SLA/MTTR, conversión o NPS/CSAT)."
+            # asegura formato de lista implícita en funcionalidades
+            if label == "funcionalidades" and count_list_items(t) < 2:
+                t += " (Detalle al menos 3–4 funcionalidades del MVP)."
+            return t
 
-            # Sugerencias / checklist
+        def build_plan(a: dict):
+            objetivos = ai_refine("objetivos", a["objetivos"])
+            problema  = ai_refine("problema", a["problema"])
+            solucion  = ai_refine("solucion", a["solucion"])
+            target    = ai_refine("target", a["target"])
+            funcs     = ai_refine("funcionalidades", a["funcionalidades"])
+            expectativas = ai_refine("expectativas", a["expectativas"])
+            experiencia  = ai_refine("experiencia", a["experiencia"])
+            adjudic      = ai_refine("adjudicacion", a["adjudicacion"])
+            criterios    = ai_refine("criterios", a["criterios"])
+            lanzamiento  = ai_refine("lanzamiento", a["lanzamiento"])
+            presupuesto  = ai_refine("presupuesto", a["presupuesto"])
+            caso         = ai_refine("caso", a["caso"])
+            nombre       = a["nombre"].strip() or "(pendiente)"
+            notas        = a["notas"].strip() or ""
+
             faltantes = [k for k,_ in QUESTIONS if not a.get(k,"").strip()]
             checklist = ", ".join(faltantes) if faltantes else "Completo ✅"
 
-            # Siguiente paso propuesto
-            siguiente = "Proponer **POC** de 2 semanas con alcance, métricas (SLA/ROI) y responsables." \
-                        if has_kpis(expectativas) or has_kpis(caso) else \
-                        "Agendar **workshop** de descubrimiento (90 min) para cerrar funcionalidades, KPIs y timeline."
+            siguiente = (
+                "Proponer **POC** de 2 semanas con alcance, métricas (SLA/ROI) y responsables."
+                if (has_kpis(expectativas) or has_kpis(caso)) else
+                "Agendar **workshop** (90 min) para cerrar funcionalidades, KPIs y timeline."
+            )
 
-            # Timeline simple (heurística)
-            timeline = lanzamiento if lanzamiento != "—" else "Definir hito de lanzamiento (mes/fecha o Q)."
-            # KPIs
-            kpis = "KPIs sugeridos: ROI esperado, ahorro %, mejora en SLA/MTTR, conversión, NPS/CSAT." \
-                   if not (has_kpis(expectativas) or has_kpis(caso)) else "KPIs definidos por el cliente."
-
-            # Criterios de evaluación
-            criterios_md = criterios if criterios != "—" else "Precio, calidad, tiempo, soporte/SLA, referencia/experiencia."
-
-            # Plan en Markdown (para exportar)
             md = f"""
 # {nombre}
 
@@ -242,11 +256,11 @@ with tabs[1]:
 ---
 
 ## 3. Plan de entrega
-**Fecha de lanzamiento / hito:** {timeline}
+**Fecha de lanzamiento / hito:** {lanzamiento}
 
 **Tipo de adjudicación:** {adjudic}
 
-**Criterios de evaluación:** {criterios_md}
+**Criterios de evaluación:** {criterios}
 
 **Experiencia previa del cliente:** {experiencia}
 
@@ -258,7 +272,7 @@ with tabs[1]:
 ---
 
 ## 5. Riesgos y mitigación
-**Riesgos/objeciones:** {a['notas'] if has_risks(notas) else 'Identificar riesgos técnicos/legales/operativos y plan de mitigación.'}
+**Riesgos/objeciones:** {notas if has_risks(notas) else "Identificar riesgos técnicos/legales/operativos y plan de mitigación."}
 
 ---
 
@@ -268,7 +282,7 @@ with tabs[1]:
 ---
 
 ### Notas generales
-{notas}
+{notas or "—"}
 
 ---
 
@@ -292,51 +306,35 @@ with tabs[1]:
                 with st.chat_message(role):
                     st.markdown(content)
 
-            # Sugerencias rápidas (chips)
-            st.caption("Sugerencias rápidas")
-            s1, s2, s3, s4 = st.columns(4)
-            if s1.button("Definir KPIs"):
-                st.session_state.case_chat_msgs.append(("user", "KPIs: ROI 18%, reducción de MTTR a 2h, CSAT > 90%."))
-                st.session_state.case_answers["expectativas"] += " KPIs: ROI 18%, MTTR 2h, CSAT >90%."
-            if s2.button("Funciones core"):
-                st.session_state.case_chat_msgs.append(("user", "Funcionalidades: dashboard, alertas, roles/permiso, exportar reportes."))
-                st.session_state.case_answers["funcionalidades"] += " dashboard, alertas, roles/permiso, exportar reportes"
-            if s3.button("Timeline Q2"):
-                st.session_state.case_chat_msgs.append(("user", "Lanzamiento objetivo: Q2 con piloto en mayo."))
-                st.session_state.case_answers["lanzamiento"] += " Lanzamiento objetivo Q2, piloto en mayo."
-            if s4.button("Presupuesto rango"):
-                st.session_state.case_chat_msgs.append(("user", "Presupuesto estimado: MXN 1.2–1.6M, aprobación CFO."))
-                st.session_state.case_answers["presupuesto"] += " MXN 1.2–1.6M, aprobación CFO."
-
-            # Entrada del usuario
+            # Entrada del usuario (sin chips de sugerencias)
             user_text = st.chat_input("Escribe tu respuesta…")
             if user_text:
                 cur = st.session_state.case_current_key
                 st.session_state.case_chat_msgs.append(("user", user_text))
 
-                # Concatenar respuesta
                 prev = st.session_state.case_answers.get(cur,"")
                 st.session_state.case_answers[cur] = (prev + " " + user_text).strip()
 
-                # Recalcular score
+                # Recalcular score del caso
                 st.session_state.score = compute_score(st.session_state.case_answers)
                 st.session_state.ready_for_pdf = st.session_state.score >= THRESHOLD
 
-                # Tips y seguimiento dinámico
+                # Seguimiento automático (preguntas de precisión)
                 tips = ""
                 ans = st.session_state.case_answers[cur]
+                follow_up = None
                 if cur == "presupuesto" and not has_money(ans):
-                    tips = " *Tip:* agrega **monto o rango** y moneda (ej. MXN 1.2–1.6M)."
+                    follow_up = "¿Puedes dar un **rango o monto** y la **moneda** (ej. MXN 1.2–1.6M)? ¿Quién lo aprueba?"
                 if cur == "lanzamiento" and not has_date(ans):
-                    tips = " *Tip:* menciona **mes/fecha/hito** (ej. 'Q2 2026', '15/03/2026')."
+                    follow_up = "¿Cuál es el **mes/fecha** o **trimestre** objetivo? ¿Hay un **hito** (piloto, go-live)?"
                 if cur == "funcionalidades" and count_list_items(ans) < 3:
-                    tips = " *Tip:* enumera 3–4 **funcionalidades** separadas por coma."
+                    follow_up = "Enumera al menos **3–4 funcionalidades** separadas por coma para el MVP."
                 if cur == "criterios" and not mentions_any(ans, criteria_words):
-                    tips = " *Tip:* incluye criterios como **precio, calidad, tiempo, soporte/SLA**."
+                    follow_up = "Indica **criterios de evaluación** (precio, calidad, tiempo, soporte/SLA, experiencia…)."
                 if cur == "target" and not mentions_roles_or_area(ans):
-                    tips = " *Tip:* menciona **rol/área** de usuarios (Operaciones, Soporte, Ventas…)."
-                if cur in ("objetivos","problema","solucion","caso") and not has_kpis(ans):
-                    tips = " *Tip:* agrega **KPIs/impacto** (ROI, ahorro %, SLA, conversión…)."
+                    follow_up = "¿Qué **roles/áreas** usarán la solución (Operaciones, Soporte, Ventas…)?"
+                if cur in ("objetivos","problema","solucion","expectativas","caso") and not has_kpis(ans):
+                    follow_up = "Añade **KPIs/impacto** (ROI esperado, ahorro %, SLA/MTTR, conversión, NPS/CSAT)."
 
                 # Avance inteligente
                 advance = partial_score(cur, ans) >= int(WEIGHTS[cur]*0.8) or len(ans.split()) > 25
@@ -351,7 +349,10 @@ with tabs[1]:
                     if faltan: feedback += f" Pendientes: `{', '.join(faltan)}`."
 
                 if nxt:
-                    st.session_state.case_chat_msgs.append(("assistant", f"Anotado. {feedback}\n{tips}\n\n**Siguiente:** {question_for(nxt)}"))
+                    msg = f"Anotado. {feedback}"
+                    if follow_up: msg += f"\n\n🔎 **Seguimiento:** {follow_up}"
+                    msg += f"\n\n**Siguiente:** {question_for(nxt)}"
+                    st.session_state.case_chat_msgs.append(("assistant", msg))
                 else:
                     st.session_state.case_chat_msgs.append(("assistant", f"**¡Listo!** {feedback}"))
                 st.rerun()
@@ -360,7 +361,6 @@ with tabs[1]:
         with right:
             md, checklist, siguiente = build_plan(st.session_state.case_answers)
 
-            # Progreso del plan (por campos respondidos)
             total_campos = len(QUESTIONS)
             completos = total_campos - checklist.count(",") if checklist != "Completo ✅" else total_campos
             prog = int((completos/total_campos)*100)
@@ -370,7 +370,6 @@ with tabs[1]:
             with st.expander("📄 Vista previa (Markdown)", expanded=True):
                 st.markdown(md)
 
-            # Botón de descarga del Markdown
             st.download_button(
                 "⬇️ Descargar Plan (.md)",
                 data=md.encode("utf-8"),
@@ -379,10 +378,8 @@ with tabs[1]:
                 use_container_width=True
             )
 
-            # Recordatorio de siguiente paso
             st.info(f"**Siguiente paso sugerido:** {siguiente}")
 
-            # Estado de umbral
             if st.session_state.ready_for_pdf:
                 st.success("✅ **Listo para PDF** (umbral alcanzado).")
             else:
