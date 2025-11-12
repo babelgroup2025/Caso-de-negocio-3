@@ -293,22 +293,60 @@ with tabs[1]:
             st.session_state.ready_for_pdf = (checklist == "Completo ✅")
 
 # ============================== TAB C: Competencia & PDF ==============================
+# ============================== TAB C: Competencia & PDF ==============================
 with tabs[2]:
     st.subheader("Competencia & PDF")
+
     if not st.session_state.get("ready_for_pdf"):
         st.info("Completa el **Caso (chat)** al 100% para habilitar la exportación a PDF.")
     else:
-        st.success("✅ Plan de Negocio completo. **Listo para PDF**.")
-        st.write("Aquí puedes agregar tu comparación competitiva y un botón para **generar PDF** con el plan.")
-        # (Opcional) Generar PDF usando el Markdown del Tab B con reportlab/fpdf.
-        # Podemos integrarlo si lo necesitas ahora.
-        
-# ------------------------------ Sidebar ------------------------------
-with st.sidebar:
-    st.subheader("Estado")
-    st.metric("Calificación (lead)", st.session_state.get("lead_score", 0))
-    st.metric("Listo para PDF", "Sí" if st.session_state.get("ready_for_pdf", False) else "No")
-    if st.button("Reiniciar sesión", use_container_width=True):
-        for k in ("lead_score","case_chat_msgs","case_answers","case_current_key","ready_for_pdf"):
-            if k in st.session_state: del st.session_state[k]
-        st.experimental_rerun()
+        st.success("✅ Plan de Negocio completo. **Listo para exportar en PDF**.")
+
+        from io import BytesIO
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Image
+        from reportlab.lib.styles import getSampleStyleSheet
+
+        # Obtener el contenido del plan desde el Tab B
+        plan_md, _ = build_plan(st.session_state.case_answers)
+
+        # Crear PDF en memoria
+        pdf_buffer = BytesIO()
+        doc = SimpleDocTemplate(pdf_buffer, pagesize=letter,
+                                leftMargin=50, rightMargin=50, topMargin=80, bottomMargin=50)
+
+        styles = getSampleStyleSheet()
+        story = []
+
+        # Logo de Babel
+        try:
+            story.append(Image("logo_babel.jpeg", width=120, height=60))
+            story.append(Spacer(1, 20))
+        except Exception:
+            st.warning("⚠️ No se pudo cargar el logo (verifica el nombre y la ubicación del archivo).")
+
+        # Título
+        story.append(Paragraph("<b>Plan de Negocio – Babel</b>", styles["Title"]))
+        story.append(Spacer(1, 12))
+
+        # Convertir Markdown a párrafos simples (sin formato)
+        for line in plan_md.split("\n"):
+            if line.strip():
+                story.append(Paragraph(line.strip(), styles["Normal"]))
+                story.append(Spacer(1, 6))
+
+        # Construir el PDF
+        doc.build(story)
+        pdf_data = pdf_buffer.getvalue()
+
+        # Botón de descarga
+        st.download_button(
+            "⬇️ Descargar Plan de Negocio en PDF",
+            data=pdf_data,
+            file_name="Plan_de_Negocio_Babel.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+        st.caption("Se incluirá el logo de Babel y todo el contenido del plan generado.")
