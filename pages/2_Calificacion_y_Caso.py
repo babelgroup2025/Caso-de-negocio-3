@@ -123,13 +123,13 @@ with tabs[0]:
     st.subheader("Calificación del lead (20/30/30/5/5)")
     st.write("Debes alcanzar un **70%** para habilitar el chat del caso.")
 
-    # Radios de calificación rápida (Sí/No)
+    # Radios sin selección inicial
     c1, c2 = st.columns(2)
-    fecha = c1.radio("¿Tiene fecha planeada para iniciar proyecto?", ["Sí", "No"], key="cal_fecha")
-    marketing = c2.radio("¿Es un proyecto para incrementar ventas o marketing?", ["Sí", "No"], key="cal_mkt")
-    presupuesto = c1.radio("¿Cuenta con presupuesto?", ["Sí", "No"], key="cal_pres")
-    prioridad = c2.radio("¿El proyecto resuelve un problema de prioridad 1, 2 o 3?", ["Sí", "No"], key="cal_prio")
-    decision = c1.radio("¿Hablamos con tomador de decisión?", ["Sí", "No"], key="cal_dec")
+    fecha = c1.radio("¿Tiene fecha planeada para iniciar proyecto?", ["Sí", "No"], index=None, key="cal_fecha")
+    marketing = c2.radio("¿Es un proyecto para incrementar ventas o marketing?", ["Sí", "No"], index=None, key="cal_mkt")
+    presupuesto = c1.radio("¿Cuenta con presupuesto?", ["Sí", "No"], index=None, key="cal_pres")
+    prioridad = c2.radio("¿El proyecto resuelve un problema de prioridad 1, 2 o 3?", ["Sí", "No"], index=None, key="cal_prio")
+    decision = c1.radio("¿Hablamos con tomador de decisión?", ["Sí", "No"], index=None, key="cal_dec")
 
     if st.button("Calcular calificación", use_container_width=True):
         score = 0
@@ -138,7 +138,9 @@ with tabs[0]:
         if presupuesto == "Sí": score += 30
         if prioridad == "Sí": score += 5
         if decision == "Sí": score += 5
+
         st.session_state.lead_score = score
+
         if score >= 70:
             st.success(f"Calificación: **{score}/100** ✅ — Puedes pasar a la pestaña **B) Caso (chat)**.")
         else:
